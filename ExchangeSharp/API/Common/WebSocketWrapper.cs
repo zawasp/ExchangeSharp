@@ -21,64 +21,74 @@ using System.Threading.Tasks;
 namespace ExchangeSharp
 {
     /// <summary>
-    /// Wraps a web socket for easy dispose later
+    /// Wraps a web socket for easy dispose later, along with auto-reconnect and message and reader queues
     /// </summary>
-    public sealed class WebSocketWrapper : IDisposable
+    public sealed class WebSocketWrapper : IWebSocket
     {
         private const int receiveChunkSize = 8192;
 
-        private ClientWebSocket webSocket;
-        private readonly Uri uri;
+        private ClientWebSocket webSocket = new ClientWebSocket();
         private readonly CancellationTokenSource cancellationTokenSource = new CancellationTokenSource();
         private readonly CancellationToken cancellationToken;
         private readonly BlockingCollection<object> messageQueue = new BlockingCollection<object>(new ConcurrentQueue<object>());
 
-        private Action<byte[], WebSocketWrapper> onMessage;
-        private Action<WebSocketWrapper> onConnected;
-        private Action<WebSocketWrapper> onDisconnected;
-        private TimeSpan connectInterval;
         private bool disposed;
-        
+
+        /// <summary>
+        /// The uri to connect to
+        /// </summary>
+        public Uri Uri { get; set; }
+
+        /// <summary>
+        /// Action to handle incoming messages
+        /// </summary>
+        public Action<byte[], WebSocketWrapper> OnMessage { get; set; }
+
+        /// <summary>
+        /// Interval to call connect at regularly (default is 1 hour)
+        /// </summary>
+        public TimeSpan ConnectInterval { get; set; } = TimeSpan.FromHours(1.0);
+
+        /// <summary>
+        /// Keep alive interval (default is 30 seconds)
+        /// </summary>
+        public TimeSpan KeepAlive { get; set; } = TimeSpan.FromSeconds(30.0);
+
+        /// <summary>
+        /// Allows additional listeners for connect event
+        /// </summary>
+        public event Action<IWebSocket> Connected;
+
+        /// <summary>
+        /// Allows additional listeners for disconnect event
+        /// </summary>
+        public event Action<IWebSocket> Disconnected;
+
         /// <summary>
         /// Whether to close the connection gracefully, this can cause the close to take longer.
         /// </summary
         public bool CloseCleanly { get; set; }
 
         /// <summary>
-        /// Constructor, also begins listening and processing messages immediately
+        /// Default constructor, does not begin listening immediately. You must set the properties and then call Start.
         /// </summary>
-        /// <param name="uri">Uri to connect to</param>
-        /// <param name="onMessage">Message callback</param>
-        /// <param name="onConnect">Connect callback, will get called on connection and every connectInterval (default 1 hour). This is a great place
-        /// to do setup, such as creating lookup dictionaries, etc. This method will re-execute until it executes without exceptions thrown.</param>
-        /// <param name="onDisconnect">Disconnect callback</param>
-        /// <param name="keepAlive">Keep alive time, default is 30 seconds</param>
-        /// <param name="connectInterval">How often to call the onConnect action (default is 1 hour)</param>
-        public WebSocketWrapper
-        (
-            string uri,
-            Action<byte[], WebSocketWrapper> onMessage,
-            Action<WebSocketWrapper> onConnect = null,
-            Action<WebSocketWrapper> onDisconnect = null,
-            TimeSpan? keepAlive = null,
-            TimeSpan? connectInterval = null
-        )
+        public WebSocketWrapper()
         {
-            webSocket = new ClientWebSocket();
-            webSocket.Options.KeepAliveInterval = (keepAlive ?? TimeSpan.FromSeconds(30.0));
-            this.uri = new Uri(uri);
             cancellationToken = cancellationTokenSource.Token;
-            this.onMessage = onMessage;
-            onConnected = onConnect;
-            onDisconnected = onDisconnect;
-            this.connectInterval = (connectInterval ?? TimeSpan.FromHours(1.0));
-
-            Task.Factory.StartNew(MessageWorkerThread);
-            Task.Factory.StartNew(ListenWorkerThread);
         }
 
         /// <summary>
-        /// Close and dispose of all resources
+        /// Start the web socket listening and processing
+        /// </summary>
+        public void Start()
+        {
+            // kick off message parser and message listener
+            Task.Run((Action)MessageWorkerThread);
+            Task.Run(ListenWorkerThread);
+        }
+
+        /// <summary>
+        /// Close and dispose of all resources, stops the web socket
         /// </summary>
         public void Dispose()
         {
@@ -87,11 +97,11 @@ namespace ExchangeSharp
             {
                 if (CloseCleanly)
                 {
-                    webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Dispose", CancellationToken.None).GetAwaiter().GetResult();
+                    webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Dispose", cancellationToken).GetAwaiter().GetResult();
                 }
                 else
                 {
-                    webSocket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "Dispose", CancellationToken.None).GetAwaiter().GetResult();
+                    webSocket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "Dispose", cancellationToken).GetAwaiter().GetResult();
                 }
             }
             catch
@@ -105,7 +115,7 @@ namespace ExchangeSharp
         /// <param name="message">The message to send</param>
         public void SendMessage(string message)
         {
-            SendMessageAsync(message).GetAwaiter().GetResult();
+            SendMessageAsync(message).ConfigureAwait(false).GetAwaiter().GetResult();
         }
 
         public async Task SendMessageAsync(string message)
@@ -124,35 +134,17 @@ namespace ExchangeSharp
             }
         }
 
-        private void QueueAction(Action<WebSocketWrapper> action)
+        private void QueueActions(params Action<WebSocketWrapper>[] actions)
         {
-            if (action != null)
+            if (actions != null && actions.Length != 0)
             {
                 messageQueue.Add((Action)(() =>
                 {
-                    try
-                    {
-                        action(this);
-                    }
-                    catch
-                    {
-                    }
-                }));
-            }
-        }
-
-        private void QueueActionWithNoExceptions(Action<WebSocketWrapper> action)
-        {
-            if (action != null)
-            {
-                messageQueue.Add((Action)(() =>
-                {
-                    while (true)
+                    foreach (var action in actions)
                     {
                         try
                         {
-                            action.Invoke(this);
-                            break;
+                            action?.Invoke(this);
                         }
                         catch
                         {
@@ -162,36 +154,61 @@ namespace ExchangeSharp
             }
         }
 
-        private void ListenWorkerThread()
+        private void QueueActionsWithNoExceptions(params Action<WebSocketWrapper>[] actions)
+        {
+            if (actions != null && actions.Length != 0)
+            {
+                messageQueue.Add((Action)(() =>
+                {
+                    foreach (var action in actions)
+                    {
+                        while (true)
+                        {
+                            try
+                            {
+                                action?.Invoke(this);
+                                break;
+                            }
+                            catch
+                            {
+                            }
+                        }
+                    }
+                }));
+            }
+        }
+
+        private async Task ListenWorkerThread()
         {
             ArraySegment<byte> receiveBuffer = new ArraySegment<byte>(new byte[receiveChunkSize]);
-            bool wasClosed = true;
             TimeSpan keepAlive = webSocket.Options.KeepAliveInterval;
             MemoryStream stream = new MemoryStream();
             WebSocketReceiveResult result;
+            bool wasConnected = false;
 
             while (!disposed)
             {
                 try
                 {
-                    if (wasClosed)
-                    {
-                        // re-open the socket
-                        wasClosed = false;
-                        webSocket = new ClientWebSocket();
-                        webSocket.ConnectAsync(uri, CancellationToken.None).GetAwaiter().GetResult();
-                        QueueActionWithNoExceptions(onConnected);
-                    }
+                    // open the socket
+                    webSocket.Options.KeepAliveInterval = KeepAlive;
+                    wasConnected = false;
+                    await webSocket.ConnectAsync(Uri, cancellationToken);
+                    wasConnected = true;
+
+                    // on connect may make additional calls that must succeed, such as rest calls
+                    // for lists, etc.
+                    QueueActionsWithNoExceptions(Connected);
 
                     while (webSocket.State == WebSocketState.Open)
                     {
                         do
                         {
-                            result = webSocket.ReceiveAsync(receiveBuffer, cancellationToken).GetAwaiter().GetResult();
+                            result = await webSocket.ReceiveAsync(receiveBuffer, cancellationToken);
                             if (result.MessageType == WebSocketMessageType.Close)
                             {
-                                webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, string.Empty, CancellationToken.None).GetAwaiter().GetResult();
-                                QueueAction(onDisconnected);
+                                await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, string.Empty, cancellationToken);
+                                QueueActions(Disconnected);
                             }
                             else
                             {
@@ -212,23 +229,25 @@ namespace ExchangeSharp
                 }
                 catch
                 {
-                    QueueAction(onDisconnected);
-                    if (!disposed)
-                    {
-                        // wait one half second before attempting reconnect
-                        Task.Delay(500).ConfigureAwait(false).GetAwaiter().GetResult();
-                    }
+                    // eat exceptions, most likely a result of a disconnect, either way we will re-create the web socket
                 }
-                finally
+
+                if (wasConnected)
                 {
-                    wasClosed = true;
-                    try
-                    {
-                        webSocket.Dispose();
-                    }
-                    catch
-                    {
-                    }
+                    QueueActions(Disconnected);
+                }
+                try
+                {
+                    webSocket.Dispose();
+                }
+                catch
+                {
+                }
+                if (!disposed)
+                {
+                    // wait 5 seconds before attempting reconnect
+                    webSocket = new ClientWebSocket();
+                    await Task.Delay(5000);
                 }
             }
         }
@@ -249,17 +268,19 @@ namespace ExchangeSharp
                         }
                         else if (message is byte[] messageBytes)
                         {
-                            onMessage?.Invoke(messageBytes, this);
+                            OnMessage?.Invoke(messageBytes, this);
                         }
                     }
                     catch
                     {
                     }
                 }
-                if (connectInterval.Ticks > 0 && (DateTime.UtcNow - lastCheck) >= connectInterval)
+                if (ConnectInterval.Ticks > 0 && (DateTime.UtcNow - lastCheck) >= ConnectInterval)
                 {
                     lastCheck = DateTime.UtcNow;
-                    QueueActionWithNoExceptions(onConnected);
+
+                    // this must succeed, the callback may be requests lists or other resources that must not fail
+                    QueueActionsWithNoExceptions(Connected);
                 }
             }
         }
