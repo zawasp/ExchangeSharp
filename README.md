@@ -37,6 +37,7 @@ The following cryptocurrency exchanges are supported:
 | Poloniex         | x         | x           | TB        |
 | TuxExchange      | x         | x           |           |
 | Yobit            | x         | x           |           |
+| ZB.com           | x         |             |           |
 
 The following cryptocurrency services are supported:
 - Cryptowatch (partial)
