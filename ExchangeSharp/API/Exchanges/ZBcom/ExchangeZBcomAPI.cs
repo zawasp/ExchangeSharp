@@ -21,6 +21,7 @@ namespace ExchangeSharp
     public sealed class ExchangeZBcomAPI : ExchangeAPI
     {
         public override string BaseUrl { get; set; } = "http://api.zb.com/data/v1";
+        public override string BaseUrlWebSocket { get; set; } = "wss://api.zb.com:9999/websocket";
         public override string Name => ExchangeName.ZBcom;
 
         public ExchangeZBcomAPI()
@@ -31,6 +32,11 @@ namespace ExchangeSharp
         public override string NormalizeSymbol(string symbol)
         {
             return (symbol ?? string.Empty).ToLowerInvariant().Replace('-', '_');
+        }
+
+        private string NormalizeSymbolWebsocket(string symbol)
+        {
+            return (symbol ?? string.Empty).ToLowerInvariant().Replace("-", string.Empty);
         }
 
         public override string ExchangeSymbolToGlobalSymbol(string symbol)
@@ -109,7 +115,7 @@ namespace ExchangeSharp
             //{ "hpybtc":{ "vol":"500450.0","last":"0.0000013949","sell":"0.0000013797","buy":"0.0000012977","high":"0.0000013949","low":"0.0000011892"},"tvqc":{ "vol":"2125511.1",
 
             var data = await MakeRequestZBcomAsync(null, "/allTicker", BaseUrl);
-            var date = DateTime.Now; //ZB.com doesn't give a timestamp when asking all tickers
+            var date = DateTime.UtcNow; //ZB.com doesn't give a timestamp when asking all tickers
             List<KeyValuePair<string, ExchangeTicker>> tickers = new List<KeyValuePair<string, ExchangeTicker>>();
             string symbol;
             foreach (JToken token in data.Item1)
@@ -118,6 +124,92 @@ namespace ExchangeSharp
                 tickers.Add(new KeyValuePair<string, ExchangeTicker>(symbol, ParseTickerV2(symbol, token, date)));
             }
             return tickers;
+        }
+
+        protected override IWebSocket OnGetTickerWebSocket(Action<KeyValuePair<string, ExchangeTicker>> callback, params string[] tickers)
+        {
+            if (callback == null)
+            {
+                return null;
+            }
+
+            return ConnectWebSocket(string.Empty, (msg, _socket) =>
+            {
+                try
+                {
+                    JToken token = JToken.Parse(msg.UTF8String());
+
+                }
+                catch
+                {
+                }
+            }, (_socket) =>
+            {
+                foreach (var ticker in tickers)
+                {
+                    string normalizedSymbol = NormalizeSymbolWebsocket(ticker);
+                    string message = "{'event':'addChannel','channel':'" + normalizedSymbol + "_ticker',}";
+                    _socket.SendMessage(message);
+                }
+            });
+        }
+
+        protected override IWebSocket OnGetTradesWebSocket(Action<KeyValuePair<string, ExchangeTrade>> callback, params string[] symbols)
+        {
+            if (callback == null)
+            {
+                return null;
+            }
+
+            return ConnectWebSocket(string.Empty, (msg, _socket) =>
+            {
+                try
+                {
+                    JToken token = JToken.Parse(msg.UTF8String());
+                    if (token["dataType"].ToStringInvariant() == "trades")
+                    {
+                        var channel = token["channel"].ToStringInvariant();
+                        var sArray = channel.Split('_');
+                        string symbol = sArray[0];
+                        var data = token["data"];
+                        var trades = ParseTradesWebsocket(data);
+                        foreach (var trade in trades)
+                        {
+                            callback(new KeyValuePair<string, ExchangeTrade>(symbol, trade));
+                        }
+                    }
+                }
+                catch
+                {
+                }
+            }, (_socket) =>
+            {
+                foreach (var symbol in symbols)
+                {
+                    string normalizedSymbol = NormalizeSymbolWebsocket(symbol);
+                    string message = "{'event':'addChannel','channel':'" + normalizedSymbol + "_trades',}";
+                    _socket.SendMessage(message);
+                }
+            });
+        }
+
+        private IEnumerable<ExchangeTrade> ParseTradesWebsocket (JToken token)
+        {
+            //{ "amount":"0.0372","price": "7509.7","tid": 153806522,"date": 1532103901,"type": "sell","trade_type": "ask"},{"amount": "0.0076", ...
+            var trades = new List<ExchangeTrade>();
+            foreach (var t in token)
+            {
+                var trade = new ExchangeTrade()
+                {
+                    Amount = t["amount"].ConvertInvariant<decimal>(),
+                    Price = t["price"].ConvertInvariant<decimal>(),
+                    Id = t["tid"].ConvertInvariant<long>(),
+                    Timestamp = CryptoUtility.UnixTimeStampToDateTimeSeconds(t["date"].ConvertInvariant<long>()),
+                    IsBuy = t["type"].ToStringInvariant() == "buy" ? true : false
+                };
+                trades.Add(trade);
+            }
+            return trades;
         }
 
         #endregion
