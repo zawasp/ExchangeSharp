@@ -135,10 +135,44 @@ namespace ExchangeSharp
 
             return ConnectWebSocket(string.Empty, (msg, _socket) =>
             {
+                /*
+                {
+                    "date": "1532157232637",
+                    "channel": "btcusdt_ticker",
+                    "dataType": "ticker",
+                    "ticker": {
+                        "vol": "14334.9373",
+                        "high": "7680.0",
+                        "low": "7205.86",
+                        "last": "7331.99",
+                        "buy": "7332.34",
+                        "sell": "7335.56"
+                    }
+                }
+                */
+
                 try
                 {
                     JToken token = JToken.Parse(msg.UTF8String());
-
+                    if (token["dataType"].ToStringInvariant() == "ticker")
+                    {
+                        string channel = token["channel"].ToStringInvariant();
+                        var sArray = channel.Split('_');
+                        string symbol = sArray[0];
+                        JToken child = token["ticker"];
+                        var ticker = new ExchangeTicker()
+                        {
+                            Ask = child["sell"].ConvertInvariant<decimal>(),
+                            Bid = child["buy"].ConvertInvariant<decimal>(),
+                            Last = child["last"].ConvertInvariant<decimal>(),
+                            Volume = new ExchangeVolume()
+                            {
+                                Timestamp = CryptoUtility.UnixTimeStampToDateTimeMilliseconds(token["date"].ConvertInvariant<long>()),
+                                BaseVolume = child["vol"].ConvertInvariant<decimal>()
+                            }
+                        };
+                        callback(new KeyValuePair<string, ExchangeTicker>(symbol,ticker));
+                    }
                 }
                 catch
                 {

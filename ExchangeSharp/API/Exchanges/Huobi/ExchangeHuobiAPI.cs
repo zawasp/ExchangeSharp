@@ -421,42 +421,42 @@ namespace ExchangeSharp
         {
             /*
             {
-              "status": "ok",
-              "ch": "market.btcusdt.depth.step0",
-              "ts": 1489472598812,
-              "tick": {
-                "id": 1489464585407,
-                "ts": 1489464585407,
-                "bids": [
-                  [7964, 0.0678], // [price, amount]
-                  [7963, 0.9162],
-                  [7961, 0.1],
-                  [7960, 12.8898],
-                  [7958, 1.2],
-                  [7955, 2.1009],
-                  [7954, 0.4708],
-                  [7953, 0.0564],
-                  [7951, 2.8031],
-                  [7950, 13.7785],
-                  [7949, 0.125],
-                  [7948, 4],
-                  [7942, 0.4337],
-                  [7940, 6.1612],
-                  [7936, 0.02],
-                  [7935, 1.3575],
-                  [7933, 2.002],
-                  [7932, 1.3449],
-                  [7930, 10.2974],
-                  [7929, 3.2226]
+            "status": "ok",
+            "ch": "market.btcusdt.depth.step0",
+            "ts": 1489472598812,
+            "tick": {
+            "id": 1489464585407,
+            "ts": 1489464585407,
+            "bids": [
+                [7964, 0.0678], // [price, amount]
+                [7963, 0.9162],
+                [7961, 0.1],
+                [7960, 12.8898],
+                [7958, 1.2],
+                [7955, 2.1009],
+                [7954, 0.4708],
+                [7953, 0.0564],
+                [7951, 2.8031],
+                [7950, 13.7785],
+                [7949, 0.125],
+                [7948, 4],
+                [7942, 0.4337],
+                [7940, 6.1612],
+                [7936, 0.02],
+                [7935, 1.3575],
+                [7933, 2.002],
+                [7932, 1.3449],
+                [7930, 10.2974],
+                [7929, 3.2226]
                 ],
-                "asks": [
-                  [7979, 0.0736],
-                  [7980, 1.0292],
-                  [7981, 5.5652],
-                  [7986, 0.2416],
-                  [7990, 1.9970],
-                  [7995, 0.88],
-             */
+            "asks": [
+                [7979, 0.0736],
+                [7980, 1.0292],
+                [7981, 5.5652],
+                [7986, 0.2416],
+                [7990, 1.9970],
+                [7995, 0.88],
+            */
             symbol = NormalizeSymbol(symbol);
             ExchangeOrderBook orders = new ExchangeOrderBook();
             JToken obj = await MakeJsonRequestAsync<JToken>("/market/depth?symbol=" + symbol + "&type=step0", BaseUrl, null);
@@ -467,21 +467,21 @@ namespace ExchangeSharp
         {
             /*
             {
-              "status": "ok",
-              "ch": "market.btcusdt.kline.1day",
-              "ts": 1499223904680,
-              “data”: [
-            {
-                "id": 1499184000,
-                "amount": 37593.0266,
-                "count": 0,
-                "open": 1935.2000,
-                "close": 1879.0000,
-                "low": 1856.0000,
-                "high": 1940.0000,
-                "vol": 71031537.97866500
-              },
-             */
+                "status": "ok",
+                "ch": "market.btcusdt.kline.1day",
+                "ts": 1499223904680,
+                “data”: [
+                    {
+                        "id": 1499184000,
+                        "amount": 37593.0266,
+                        "count": 0,
+                        "open": 1935.2000,
+                        "close": 1879.0000,
+                        "low": 1856.0000,
+                        "high": 1940.0000,
+                        "vol": 71031537.97866500
+                    },
+            */
 
             List<MarketCandle> candles = new List<MarketCandle>();
             symbol = NormalizeSymbol(symbol);
@@ -520,38 +520,38 @@ namespace ExchangeSharp
 
         #endregion
 
-#region Private APIs
+        #region Private APIs
 
         private async Task<Dictionary<string, string>> OnGetAccountsAsync()
         {
             /*
             {[
-  {
-    "id": 3274515,
-    "type": "spot",
-    "subtype": "",
-    "state": "working"
-  },
-  {
-    "id": 4267855,
-    "type": "margin",
-    "subtype": "btcusdt",
-    "state": "working"
-  },
-  {
-    "id": 3544747,
-    "type": "margin",
-    "subtype": "ethusdt",
-    "state": "working"
-  },
-  {
-    "id": 3274640,
-    "type": "otc",
-    "subtype": "",
-    "state": "working"
-  }
-]}
- */
+                {
+                    "id": 3274515,
+                    "type": "spot",
+                    "subtype": "",
+                    "state": "working"
+                },
+                {
+                    "id": 4267855,
+                    "type": "margin",
+                    "subtype": "btcusdt",
+                    "state": "working"
+                },
+                {
+                    "id": 3544747,
+                    "type": "margin",
+                    "subtype": "ethusdt",
+                    "state": "working"
+                },
+                {
+                    "id": 3274640,
+                    "type": "otc",
+                    "subtype": "",
+                    "state": "working"
+                }
+            ]}
+            */
             if (ReadCache("GetAccounts", out Dictionary<string, string> accounts))
             {
                 return accounts;
@@ -580,34 +580,34 @@ namespace ExchangeSharp
         protected override async Task<Dictionary<string, decimal>> OnGetAmountsAsync()
         {
             /*
-             
-  "status": "ok",
-  "data": {
-    "id": 3274515,
-    "type": "spot",
-    "state": "working",
-    "list": [
-      {
-        "currency": "usdt",
-        "type": "trade",
-        "balance": "0.000045000000000000"
-      },
-      {
-        "currency": "eth",
-        "type": "frozen",
-        "balance": "0.000000000000000000"
-      },
-      {
-        "currency": "eth",
-        "type": "trade",
-        "balance": "0.044362165000000000"
-      },
-      {
-        "currency": "eos",
-        "type": "trade",
-        "balance": "16.467000000000000000"
-      },
-             */
+            "status": "ok",
+                "data": {
+                    "id": 3274515,
+                    "type": "spot",
+                    "state": "working",
+                    "list": [
+                        {
+                            "currency": "usdt",
+                            "type": "trade",
+                            "balance": "0.000045000000000000"
+                        },
+                        {
+                            "currency": "eth",
+                            "type": "frozen",
+                            "balance": "0.000000000000000000"
+                        },
+                        {
+                            "currency": "eth",
+                            "type": "trade",
+                            "balance": "0.044362165000000000"
+                        },
+                        {
+                            "currency": "eos",
+                            "type": "trade",
+                            "balance": "16.467000000000000000"
+                        },
+            */
+
             var account_id = await GetAccountID();
 
             Dictionary<string, decimal> amounts = new Dictionary<string, decimal>();
@@ -668,26 +668,24 @@ namespace ExchangeSharp
         protected override async Task<ExchangeOrderResult> OnGetOrderDetailsAsync(string orderId, string symbol = null)
         {
             /*
-             {{
-              "status": "ok",
-              "data": {
-                "id": 3908501445,
-                "symbol": "naseth",
-                "account-id": 3274515,
-                "amount": "0.050000000000000000",
-                "price": "0.000001000000000000",
-                "created-at": 1525100546601,
-                "type": "buy-limit",
-                "field-amount": "0.0",
-                "field-cash-amount": "0.0",
-                "field-fees": "0.0",
-                "finished-at": 1525100816771,
-                "source": "api",
-                "state": "canceled",
-                "canceled-at": 1525100816399
-              }
-            }}
-             */
+            "status": "ok",
+                "data": {
+                    "id": 3908501445,
+                    "symbol": "naseth",
+                    "account-id": 3274515,
+                    "amount": "0.050000000000000000",
+                    "price": "0.000001000000000000",
+                    "created-at": 1525100546601,
+                    "type": "buy-limit",
+                    "field-amount": "0.0",
+                    "field-cash-amount": "0.0",
+                    "field-fees": "0.0",
+                    "finished-at": 1525100816771,
+                    "source": "api",
+                    "state": "canceled",
+                    "canceled-at": 1525100816399
+                }
+            */
             var payload = await OnGetNoncePayloadAsync();
             JToken data = await MakeJsonRequestAsync<JToken>($"/order/orders/{orderId}", PrivateUrlV1, payload);
             return ParseOrder(data);
@@ -782,18 +780,18 @@ namespace ExchangeSharp
             throw new NotImplementedException("Huobi does not provide a deposit API");
 
             /*
-            var payload = await GetNoncePayloadAsync();
-            payload.Add("need_new", forceRegenerate ? 1 : 0);
-            payload.Add("method", "GetDepositAddress");
-            payload.Add("coinName", symbol);
-            payload["method"] = "POST";
-            // "return":{"address": 1UHAnAWvxDB9XXETsi7z483zRRBmcUZxb3,"processed_amount": 1.00000000,"server_time": 1437146228 }
-            JToken token = await MakeJsonRequestAsync<JToken>("/", PrivateUrlV1, payload, "POST");
-            return new ExchangeDepositDetails
-            {
-                Address = token["address"].ToStringInvariant(),
-                Symbol = symbol
-            };
+                var payload = await GetNoncePayloadAsync();
+                payload.Add("need_new", forceRegenerate ? 1 : 0);
+                payload.Add("method", "GetDepositAddress");
+                payload.Add("coinName", symbol);
+                payload["method"] = "POST";
+                // "return":{"address": 1UHAnAWvxDB9XXETsi7z483zRRBmcUZxb3,"processed_amount": 1.00000000,"server_time": 1437146228 }
+                JToken token = await MakeJsonRequestAsync<JToken>("/", PrivateUrlV1, payload, "POST");
+                return new ExchangeDepositDetails
+                {
+                    Address = token["address"].ToStringInvariant(),
+                    Symbol = symbol
+                };
             */
         }
 
@@ -803,9 +801,9 @@ namespace ExchangeSharp
         }
 
 
-#endregion
+        #endregion
 
-#region Private Functions
+        #region Private Functions
 
         protected override JToken CheckJsonResponse(JToken result)
         {

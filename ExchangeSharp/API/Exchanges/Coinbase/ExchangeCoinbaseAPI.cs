@@ -318,7 +318,7 @@ namespace ExchangeSharp
                 return null;
             }
 
-            var wrapper = ConnectWebSocket("/", (msg, _socket) =>
+            return ConnectWebSocket("/", (msg, _socket) =>
             {
                 try
                 {
@@ -330,25 +330,25 @@ namespace ExchangeSharp
                 catch
                 {
                 }
-            }) as WebSocketWrapper;
-
-            var symbols = GetSymbols();
-
-            var subscribeRequest = new
+            }, (_socket) =>
             {
-                type = "subscribe",
-                product_ids = symbols,
-                channels = new object[]
+                var symbols = GetSymbols();
+
+                var subscribeRequest = new
+                {
+                    type = "subscribe",
+                    product_ids = symbols,
+                    channels = new object[]
                 {
                     new {
                         name = "ticker",
                         product_ids = symbols
                     }
                 }
-            };
-            wrapper.SendMessage(Newtonsoft.Json.JsonConvert.SerializeObject(subscribeRequest));
-
-            return wrapper;
+                };
+                string message = Newtonsoft.Json.JsonConvert.SerializeObject(subscribeRequest);
+                _socket.SendMessage(message);
+            });
         }
 
         private ExchangeTicker ParseTickerWebSocket(JToken token)
@@ -370,6 +370,60 @@ namespace ExchangeSharp
                     ConvertedSymbol = symbol,
                     Timestamp = time
                 }
+            };
+        }
+
+        protected override IWebSocket OnGetTradesWebSocket(Action<KeyValuePair<string, ExchangeTrade>> callback, params string[] symbols)
+        {
+            if (callback == null)
+            {
+                return null;
+            }
+
+            return ConnectWebSocket("/", (msg, _socket) =>
+            {
+                try
+                {
+                    JToken token = JToken.Parse(msg.UTF8String());
+                    if (token["type"].ToStringInvariant() != "ticker") return; //the ticker channel provides the trade information as well
+                    if (token["time"] == null) return;
+                    ExchangeTrade trade = ParseTradeWebSocket(token);
+                    string symbol = token["product_id"].ToStringInvariant();
+                    callback(new KeyValuePair<string, ExchangeTrade>(symbol, trade));
+                }
+                catch
+                {
+                }
+            }, (_socket) =>
+            {
+                var subscribeRequest = new
+                {
+                    type = "subscribe",
+                    product_ids = symbols,
+                    channels = new object[]
+                    {
+                        new {
+                            name = "ticker",
+                            product_ids = symbols
+                        }
+                    }
+                };
+                string message = Newtonsoft.Json.JsonConvert.SerializeObject(subscribeRequest);
+                _socket.SendMessage(message);
+            });
+        }
+
+        private ExchangeTrade ParseTradeWebSocket(JToken token)
+        {
+            var dateObj = token["time"];
+            DateTime date = dateObj.ToObject<DateTime>();
+            return new ExchangeTrade
+            {
+                Amount = token["last_size"].ConvertInvariant<decimal>(),
+                Id = token["sequence"].ConvertInvariant<long>(),
+                IsBuy = token["side"].ToStringInvariant() == "buy" ? true : false,
+                Price = token["price"].ConvertInvariant<decimal>(),
+                Timestamp = date
             };
         }
 
