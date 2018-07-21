@@ -140,7 +140,9 @@ namespace ExchangeSharp
                     }
                     else
                     {
-                        throw new System.IO.InvalidDataException("Unexpected market name: " + market.MarketName);
+                        // TODO: Figure out a nicer way to handle newly added pairs
+                        market.MarketCurrency = market.MarketName.Substring(0, 3);
+                        market.BaseCurrency = market.MarketName.Substring(3);
                     }
                 }
                 int pricePrecision = pair["price_precision"].ConvertInvariant<int>();
