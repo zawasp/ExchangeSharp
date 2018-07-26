@@ -78,7 +78,7 @@ namespace ExchangeSharp
 
         public override string NormalizeSymbol(string symbol)
         {
-            return (symbol ?? string.Empty).ToUpperInvariant();
+            return (symbol ?? string.Empty).Replace('/', '_').Replace('-', '_').ToUpperInvariant();
         }
 
         private ExchangeOrderResult ParseOrder(JToken token)

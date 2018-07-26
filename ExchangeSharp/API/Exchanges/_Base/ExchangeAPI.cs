@@ -1301,6 +1301,21 @@ namespace ExchangeSharp
         public const string Poloniex = "Poloniex";
 
         /// <summary>
+        /// Stocks.Exchange
+        /// </summary>
+        public const string StocksExchange = "Stocks.Exchange";
+
+        /// <summary>
+        /// SouthXchange
+        /// </summary>
+        public const string SouthXchange = "SouthXchange";
+
+        /// <summary>
+        /// SouthXchange
+        /// </summary>
+        public const string TradeSatoshi = "TradeSatoshi";
+
+        /// <summary>
         /// TuxExchange
         /// </summary>
         public const string TuxExchange = "TuxExchange";
