@@ -26,7 +26,7 @@ namespace ExchangeSharp
     public sealed class ExchangeBitfinexAPI : ExchangeAPI
     {
         public override string BaseUrl { get; set; } = "https://api.bitfinex.com/v2";
-        public override string BaseUrlWebSocket { get; set; } = "wss://api.bitfinex.com/ws";
+        public override string BaseUrlWebSocket { get; set; } = "wss://api.bitfinex.com/ws/2";
         public override string Name => ExchangeName.Bitfinex;
 
         public Dictionary<string, string> DepositMethodLookup { get; }
@@ -212,7 +212,7 @@ namespace ExchangeSharp
                     JToken token = JToken.Parse(msg.UTF8String());
                     if (token is JArray array)
                     {
-                        if (array.Count > 10)
+                        if (token.Last.Count() > 9)
                         {
                             List<KeyValuePair<string, ExchangeTicker>> tickerList = new List<KeyValuePair<string, ExchangeTicker>>();
                             if (channelIdToSymbol.TryGetValue(array[0].ConvertInvariant<int>(), out string symbol))
@@ -237,10 +237,66 @@ namespace ExchangeSharp
                 }
             }, (_socket) =>
             {
+                //_socket.SendMessage("{\"event\": \"subscribe\", \"channel\": \"ticker\", \"symbol\": \"" + "tBTCUSD" + "\" }");
                 var symbols = GetSymbols();
                 foreach (var symbol in symbols)
                 {
-                    _socket.SendMessage("{\"event\":\"subscribe\",\"channel\":\"ticker\",\"pair\":\"" + symbol + "\"}");
+                    _socket.SendMessage("{\"event\":\"subscribe\",\"channel\":\"ticker\",\"symbol\":\"" + symbol + "\"}");
+                }
+            });
+        }
+
+        protected override IWebSocket OnGetTradesWebSocket(Action<KeyValuePair<string, ExchangeTrade>> callback, params string[] symbols)
+        {
+            if (callback == null)
+            {
+                return null;
+            }
+            Dictionary<int, string> channelIdToSymbol = new Dictionary<int, string>();
+            return ConnectWebSocket(string.Empty, (msg, _socket) =>
+            {
+                try
+                {
+                    JToken token = JToken.Parse(msg.UTF8String());
+                    if (token is JArray array)
+                    {
+                        if (token.Last.Last.HasValues == false)
+                        {
+                            //[29654, "tu", [270343572, 1532012917722, -0.003, 7465.636738]] "te"=temp/intention to execute "tu"=confirmed and ID is definitive
+                            //chan id, -- , [ID       , timestamp    , amount, price      ]]
+                            if (channelIdToSymbol.TryGetValue(array[0].ConvertInvariant<int>(), out string symbol))
+                            {
+                                if (token[1].ConvertInvariant<string>() == "tu")
+                                {
+                                    ExchangeTrade trade = ParseTradeWebSocket(symbol, token.Last);
+                                    if (trade != null)
+                                    {
+                                        callback(new KeyValuePair<string, ExchangeTrade>(symbol, trade));
+                                    }
+                                }
+                            }
+                        }
+                        else
+                        {
+                            //parse snapshot here if needed
+                        }
+                    }
+                    else if (token["event"].ToStringInvariant() == "subscribed" && token["channel"].ToStringInvariant() == "trades")
+                    {
+                        //{"event": "subscribed","channel": "trades","chanId": 29654,"symbol": "tBTCUSD","pair": "BTCUSD"}
+                        int channelId = token["chanId"].ConvertInvariant<int>();
+                        channelIdToSymbol[channelId] = token["pair"].ToStringInvariant();
+                    }
+                }
+                catch
+                {
+                }
+            }, (_socket) =>
+            {
+                foreach (var symbol in symbols)
+                {
+                    string normalizedSymbol = NormalizeSymbol(symbol);
+                    _socket.SendMessage("{\"event\":\"subscribe\",\"channel\":\"trades\",\"symbol\":\"" + normalizedSymbol + "\"}");
                 }
             });
         }
@@ -777,6 +833,7 @@ namespace ExchangeSharp
                  "<ORD_HIDDEN>",
                 "<ORD_OCO>"
             ] ] ];
+
             */
 
             decimal amount = order[2].ConvertInvariant<decimal>();
@@ -861,12 +918,12 @@ namespace ExchangeSharp
 
         private ExchangeTicker ParseTickerWebSocket(string symbol, JToken token)
         {
-            decimal last = token[7].ConvertInvariant<decimal>();
-            decimal volume = token[8].ConvertInvariant<decimal>();
+            decimal last = token.Last[6].ConvertInvariant<decimal>();
+            decimal volume = token.Last[7].ConvertInvariant<decimal>();
             return new ExchangeTicker
             {
-                Ask = token[3].ConvertInvariant<decimal>(),
-                Bid = token[1].ConvertInvariant<decimal>(),
+                Ask = token.Last[3].ConvertInvariant<decimal>(),
+                Bid = token.Last[1].ConvertInvariant<decimal>(),
                 Last = last,
                 Volume = new ExchangeVolume
                 {
@@ -876,6 +933,19 @@ namespace ExchangeSharp
                     ConvertedSymbol = symbol,
                     Timestamp = DateTime.UtcNow
                 }
+            };
+        }
+
+        private ExchangeTrade ParseTradeWebSocket(string symbol, JToken token)
+        {
+            decimal amount = token[2].ConvertInvariant<decimal>();
+            return new ExchangeTrade
+            {
+                Id = token[0].ConvertInvariant<int>(),
+                Timestamp = CryptoUtility.UnixTimeStampLocalToDateTimeMilliseconds(token[1].ConvertInvariant<double>()),
+                Amount = Math.Abs(amount),
+                IsBuy = amount > 0 ? true : false,
+                Price = token[3].ConvertInvariant<decimal>()
             };
         }
 

@@ -130,6 +130,7 @@ namespace ExchangeSharp
         protected virtual Task<ExchangeMarginPositionResult> OnGetOpenPositionAsync(string symbol) => throw new NotImplementedException();
         protected virtual Task<ExchangeCloseMarginPositionResult> OnCloseMarginPositionAsync(string symbol) => throw new NotImplementedException();
 
+        protected virtual IWebSocket OnGetTickerWebSocket(Action<KeyValuePair<string, ExchangeTicker>> callback, params string[] tickers) => throw new NotImplementedException();
         protected virtual IWebSocket OnGetTickersWebSocket(Action<IReadOnlyCollection<KeyValuePair<string, ExchangeTicker>>> tickers) => throw new NotImplementedException();
         protected virtual IWebSocket OnGetTradesWebSocket(Action<KeyValuePair<string, ExchangeTrade>> callback, params string[] symbols) => throw new NotImplementedException();
         protected virtual IWebSocket OnGetOrderBookDeltasWebSocket(Action<ExchangeOrderBook> callback, int maxCount = 20, params string[] symbols) => throw new NotImplementedException();
@@ -1171,6 +1172,14 @@ namespace ExchangeSharp
         #endregion REST API
 
         #region Web Socket API
+
+        /// <summary>
+        /// Get select tickers via web socket
+        /// </summary>
+        /// <param name="callback">Callback</param>
+        /// <param name="symbols">Symbols</param>
+        /// <returns>Web socket, call Dispose to close</returns>
+        public IWebSocket GetTickerWebSocket(Action<KeyValuePair<string, ExchangeTicker>> callback, params string[] tickers) => OnGetTickerWebSocket(callback, tickers);
 
         /// <summary>
         /// Get all tickers via web socket
