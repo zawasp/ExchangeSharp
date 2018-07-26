@@ -181,7 +181,7 @@ namespace ExchangeSharp
 
         private async Task<IEnumerable<ExchangeOrderResult>> QueryOrdersAsync(string symbol, string path)
         {
-            List<ExchangeOrderResult> orders = new List<ExchangeSharp.ExchangeOrderResult>();
+            List<ExchangeOrderResult> orders = new List<ExchangeOrderResult>();
             JToken result = await MakeJsonRequestAsync<JToken>(path, null, await OnGetNoncePayloadAsync());
             result = result["open"];
             symbol = NormalizeSymbol(symbol);
@@ -302,8 +302,7 @@ namespace ExchangeSharp
                 {
                     break;
                 }
-                JArray outerArray = result[symbol] as JArray;
-                if (outerArray == null || outerArray.Count == 0)
+                if (!(result[symbol] is JArray outerArray) || outerArray.Count == 0)
                 {
                     break;
                 }

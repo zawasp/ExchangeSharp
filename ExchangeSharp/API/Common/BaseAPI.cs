@@ -115,7 +115,7 @@ namespace ExchangeSharp
 
         /// <summary>
         /// Pass phrase API key - only needs to be set if you are using private authenticated end points. Please use CryptoUtility.SaveUnprotectedStringsToFile to store your API keys, never store them in plain text!
-        /// Most services do not require this, but GDAX is an example of one that does
+        /// Most services do not require this, but Coinbase is an example of one that does
         /// </summary>
         public System.Security.SecureString Passphrase { get; set; }
 
@@ -387,8 +387,7 @@ namespace ExchangeSharp
 
             string stringResult = await MakeRequestAsync(url, baseUrl: baseUrl, payload: payload, method: requestMethod);
             T jsonResult = JsonConvert.DeserializeObject<T>(stringResult);
-            JToken token = jsonResult as JToken;
-            if (token != null)
+            if (jsonResult is JToken token)
             {
                 return (T)(object)CheckJsonResponse(token);
             }
@@ -405,7 +404,13 @@ namespace ExchangeSharp
         public WebSocketWrapper ConnectWebSocket(string url, Action<byte[], WebSocketWrapper> messageCallback, Action<WebSocketWrapper> connectCallback = null)
         {
             string fullUrl = BaseUrlWebSocket + (url ?? string.Empty);
-            return new WebSocketWrapper(fullUrl, messageCallback, connectCallback);
+            WebSocketWrapper wrapper = new WebSocketWrapper { Uri = new Uri(fullUrl), OnMessage = messageCallback, KeepAlive = TimeSpan.FromSeconds(5.0) };
+            if (connectCallback != null)
+            {
+                wrapper.Connected += (s) => connectCallback(wrapper);
+            }
+            wrapper.Start();
+            return wrapper;
         }
 
         /// <summary>
@@ -510,7 +515,7 @@ namespace ExchangeSharp
                     cache.Remove(key);
                 }
             }
-            value = default(T);
+            value = default;
             return false;
         }
 
@@ -557,7 +562,7 @@ namespace ExchangeSharp
         /// </summary>
         /// <param name="obj">Object to convert</param>
         /// <returns>DateTime with DateTimeKind kind or defaultValue if no conversion possible</returns>
-        protected DateTime ConvertDateTimeInvariant(object obj, DateTime defaultValue = default(DateTime))
+        protected DateTime ConvertDateTimeInvariant(object obj, DateTime defaultValue = default)
         {
             return obj.ToDateTimeInvariant(DateTimeAreLocal, defaultValue);
         }
