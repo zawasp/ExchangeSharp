@@ -46,29 +46,22 @@ namespace ExchangeSharp
             // Only Private APIs are POST and need Authorization
             if (CanMakeAuthenticatedRequest(payload) && request.Method == "POST")
             {
-                var requestContentBase64String = string.Empty;
-                var nonce = payload["nonce"] as string;
-                payload.Remove("nonce");
+                var signature = string.Empty;
 
-                var jsonContent = CryptoUtility.GetJsonForPayload(payload);
-                if (!string.IsNullOrEmpty(jsonContent))
+                var formContent = CryptoUtility.GetJsonForPayload(payload);
+
+                if (!string.IsNullOrEmpty(formContent))
                 {
-                    using (var md5 = MD5.Create())
-                    {
-                        requestContentBase64String = Convert.ToBase64String(md5.ComputeHash(Encoding.UTF8.GetBytes(jsonContent)));
-                    }
+                    signature = CryptoUtility.SHA512Sign(formContent, PrivateApiKey.ToBytes()).ToLowerInvariant();
                 }
                 else request.ContentLength = 0;
-
-                var baseSig = string.Concat(PublicApiKey.ToUnsecureString(), request.Method, Uri.EscapeDataString(request.RequestUri.AbsoluteUri).ToLower(), nonce, requestContentBase64String);
-                var signature = CryptoUtility.SHA256SignBase64(baseSig, Convert.FromBase64String(PrivateApiKey.ToUnsecureString()));
-                request.Headers.Add(HttpRequestHeader.Authorization,
-                    $"amx {PublicApiKey.ToUnsecureString()}:{signature}:{nonce}");
+                request.Headers.Add("Sign", signature);
+                request.Headers.Add("Key", PublicApiKey.ToUnsecureString());
 
                 // Cryptopia is very picky on how the payload is passed. There might be a better way to do this, but this works...
                 using (var stream = await request.GetRequestStreamAsync())
                 {
-                    var content = Encoding.UTF8.GetBytes(jsonContent);
+                    var content = Encoding.UTF8.GetBytes(formContent);
                     stream.Write(content, 0, content.Length);
                 }
             }
@@ -110,16 +103,16 @@ namespace ExchangeSharp
             //[{"currency":"ETHCA","active":true,"precision":8,"api_precision":8,"minimum_withdrawal_amount":"0.00200000","minimum_deposit_amount":"0.00000000","deposit_fee_currency":"ETHCA","deposit_fee_const":"0.00000000","deposit_fee_percent":0,"withdrawal_fee_currency":"ETHCA","withdrawal_fee_const":"0.00100000","withdrawal_fee_percent":0,"currency_long":"Ethcash","block_explorer_url":""}, ... ]
             var result = await MakeJsonRequestAsync<JToken>("/currencies");
             return result.Select(token => new ExchangeMarket()
-                {
-                    MarketName = token["currency_long"].ToStringInvariant(),
-                    BaseCurrency = token["currency"].ToStringInvariant(),
-                    MarketCurrency = token["currency"].ToStringInvariant(),
-                    //MaxTradeSize = token["MaximumTrade"].ConvertInvariant<decimal>(),
-                    //MaxPrice = token["MaximumPrice"].ConvertInvariant<decimal>(),
-                    //MinTradeSize = token["MinimumTrade"].ConvertInvariant<decimal>(),
-                    //MinPrice = token["MinimumPrice"].ConvertInvariant<decimal>(),
-                    IsActive = token["active"].ToStringInvariant().Equals("true")
-                })
+            {
+                MarketName = token["currency_long"].ToStringInvariant(),
+                BaseCurrency = token["currency"].ToStringInvariant(),
+                MarketCurrency = token["currency"].ToStringInvariant(),
+                //MaxTradeSize = token["MaximumTrade"].ConvertInvariant<decimal>(),
+                //MaxPrice = token["MaximumPrice"].ConvertInvariant<decimal>(),
+                //MinTradeSize = token["MinimumTrade"].ConvertInvariant<decimal>(),
+                //MinPrice = token["MinimumPrice"].ConvertInvariant<decimal>(),
+                IsActive = token["active"].ToStringInvariant().Equals("true")
+            })
                 .ToList();
         }
 
@@ -194,34 +187,45 @@ namespace ExchangeSharp
             var amounts = new Dictionary<string, decimal>();
 
             var payload = await OnGetNoncePayloadAsync();
-            payload.Add("Currency", "");
-
-            var token = await MakeJsonRequestAsync<JToken>("/GetBalance", null, payload, "POST");
-            if (!token.HasValues) return amounts;
-            foreach (var currency in token)
+            payload.Add("method", "GetInfo");
+            var token = await MakeJsonRequestAsync<JToken>("/", null, payload, "POST");
+            foreach (var currency in token["funds"].Children<JProperty>())
             {
-                var amount = currency["Total"].ConvertInvariant<decimal>();
-                if (amount > 0) amounts.Add(currency["Symbol"].ToStringInvariant(), amount);
+                var amount = currency.Value.ToObject<decimal>();
+                if (amount > 0) amounts.Add(currency.Name, amount);
             }
             return amounts;
         }
 
         protected override async Task<Dictionary<string, decimal>> OnGetAmountsAvailableToTradeAsync()
         {
-            var amounts = new Dictionary<string, decimal>();
-
+            var availableAmounts = new Dictionary<string, decimal>();
+            var holdAmounts = new Dictionary<string, decimal>();
+            var totalAmounts = new Dictionary<string, decimal>();
             var payload = await OnGetNoncePayloadAsync();
-            payload.Add("Currency", "");
+            payload.Add("method", "GetInfo");
 
-            // [ { "CurrencyId":1,"Symbol":"BTC","Total":"10300","Available":"6700.00000000","Unconfirmed":"2.00000000","HeldForTrades":"3400,00000000","PendingWithdraw":"200.00000000", "Address":"4HMjBARzTNdUpXCYkZDTHq8vmJQkdxXyFg","BaseAddress": "ZDTHq8vmJQkdxXyFgZDTHq8vmJQkdxXyFgZDTHq8vmJQkdxXyFg","Status":"OK", "StatusMessage":"" }, ... ]
-            var token = await MakeJsonRequestAsync<JToken>("/GetBalance", null, payload, "POST");
-            if (!token.HasValues) return amounts;
-            foreach (var currency in token)
+            var token = await MakeJsonRequestAsync<JToken>("/", null, payload, "POST");
+            foreach (var currency in token["funds"].Children<JProperty>())
             {
-                var amount = currency["Available"].ConvertInvariant<decimal>();
-                if (amount > 0) amounts.Add(currency["Symbol"].ToStringInvariant(), amount);
+                var amount = currency.Value.ToObject<decimal>();
+                if (amount > 0) totalAmounts.Add(currency.Name, amount);
             }
-            return amounts;
+            foreach (var currency in token["hold_funds"].Children<JProperty>())
+            {
+                var amount = currency.Value.ToObject<decimal>();
+                if (amount > 0) holdAmounts.Add(currency.Name, amount);
+            }
+            foreach (var totalAmount in totalAmounts)
+            {
+                var availableAmount = totalAmount.Value;
+                if (holdAmounts.ContainsKey(totalAmount.Key) && holdAmounts[totalAmount.Key] > 0)
+                {
+                    availableAmount -= holdAmounts[totalAmount.Key];
+                }
+                availableAmounts.Add(totalAmount.Key, availableAmount);
+            }
+            return availableAmounts;
         }
 
         protected override async Task<IEnumerable<ExchangeOrderResult>> OnGetCompletedOrderDetailsAsync(string symbol = null, DateTime? afterDate = null)
@@ -298,15 +302,16 @@ namespace ExchangeSharp
             var newOrder = new ExchangeOrderResult() { Result = ExchangeAPIOrderResult.Error };
 
             var payload = await OnGetNoncePayloadAsync();
-            payload["Market"] = order.Symbol;
-            payload["Type"] = order.IsBuy ? "Buy" : "Sell";
-            payload["Rate"] = order.Price;
-            payload["Amount"] = order.Amount;
+            payload["method"] = "Trade";
+            payload["pair"] = order.Symbol;
+            payload["type"] = order.IsBuy ? "BUY" : "SELL";
+            payload["rate"] = order.Price;
+            payload["amount"] = order.Amount;
             order.ExtraParameters.CopyTo(payload);
 
-            var token = await MakeJsonRequestAsync<JToken>("/SubmitTrade", null, payload, "POST");
-            if (!token.HasValues || token["OrderId"] == null) return newOrder;
-            newOrder.OrderId = token["OrderId"].ConvertInvariant<int>().ToStringInvariant();
+            var token = await MakeJsonRequestAsync<JToken>("/", null, payload, "POST");
+            if (!token.HasValues || token["order_id"] == null) return newOrder;
+            newOrder.OrderId = token["order_id"].ConvertInvariant<int>().ToStringInvariant();
             newOrder.Result = ExchangeAPIOrderResult.Pending;           // Might we change this depending on what the filled orders are?
             return newOrder;
         }

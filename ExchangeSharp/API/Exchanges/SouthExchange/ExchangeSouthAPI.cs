@@ -14,7 +14,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
-using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using ExchangeSharp.Utility;
@@ -46,29 +45,22 @@ namespace ExchangeSharp
             // Only Private APIs are POST and need Authorization
             if (CanMakeAuthenticatedRequest(payload) && request.Method == "POST")
             {
-                var requestContentBase64String = string.Empty;
-                var nonce = payload["nonce"] as string;
-                payload.Remove("nonce");
+                var signature = string.Empty;
+                payload.Add("key", PublicApiKey.ToUnsecureString());
 
-                var jsonContent = CryptoUtility.GetJsonForPayload(payload);
-                if (!string.IsNullOrEmpty(jsonContent))
+                var formContent = CryptoUtility.GetJsonForPayload(payload);
+
+                if (!string.IsNullOrEmpty(formContent))
                 {
-                    using (var md5 = MD5.Create())
-                    {
-                        requestContentBase64String = Convert.ToBase64String(md5.ComputeHash(Encoding.UTF8.GetBytes(jsonContent)));
-                    }
+                    signature = CryptoUtility.SHA512Sign(formContent, PrivateApiKey.ToBytes()).ToLowerInvariant();
                 }
                 else request.ContentLength = 0;
-
-                var baseSig = string.Concat(PublicApiKey.ToUnsecureString(), request.Method, Uri.EscapeDataString(request.RequestUri.AbsoluteUri).ToLower(), nonce, requestContentBase64String);
-                var signature = CryptoUtility.SHA256SignBase64(baseSig, Convert.FromBase64String(PrivateApiKey.ToUnsecureString()));
-                request.Headers.Add(HttpRequestHeader.Authorization,
-                    $"amx {PublicApiKey.ToUnsecureString()}:{signature}:{nonce}");
+                request.Headers.Add("Hash", signature);
 
                 // Cryptopia is very picky on how the payload is passed. There might be a better way to do this, but this works...
                 using (var stream = await request.GetRequestStreamAsync())
                 {
-                    var content = Encoding.UTF8.GetBytes(jsonContent);
+                    var content = Encoding.UTF8.GetBytes(formContent);
                     stream.Write(content, 0, content.Length);
                 }
             }
@@ -196,9 +188,8 @@ namespace ExchangeSharp
             var amounts = new Dictionary<string, decimal>();
 
             var payload = await OnGetNoncePayloadAsync();
-            payload.Add("Currency", "");
 
-            var token = await MakeJsonRequestAsync<JToken>("/GetBalance", null, payload, "POST");
+            var token = await MakeJsonRequestAsync<JToken>("/listBalances", null, payload, "POST");
             if (!token.HasValues) return amounts;
             foreach (var currency in token)
             {
@@ -213,10 +204,9 @@ namespace ExchangeSharp
             var amounts = new Dictionary<string, decimal>();
 
             var payload = await OnGetNoncePayloadAsync();
-            payload.Add("Currency", "");
 
             // [ { "CurrencyId":1,"Symbol":"BTC","Total":"10300","Available":"6700.00000000","Unconfirmed":"2.00000000","HeldForTrades":"3400,00000000","PendingWithdraw":"200.00000000", "Address":"4HMjBARzTNdUpXCYkZDTHq8vmJQkdxXyFg","BaseAddress": "ZDTHq8vmJQkdxXyFgZDTHq8vmJQkdxXyFgZDTHq8vmJQkdxXyFg","Status":"OK", "StatusMessage":"" }, ... ]
-            var token = await MakeJsonRequestAsync<JToken>("/GetBalance", null, payload, "POST");
+            var token = await MakeJsonRequestAsync<JToken>("/listBalances", null, payload, "POST");
             if (!token.HasValues) return amounts;
             foreach (var currency in token)
             {
