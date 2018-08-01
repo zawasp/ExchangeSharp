@@ -82,7 +82,8 @@ namespace ExchangeSharp
                 {
                     Name = baseSymbol,
                     FullName = baseSymbol,
-                    IsEnabled = true
+                    DepositEnabled = true,
+                    WithdrawalEnabled = true
                 };
                 currencies[baseSymbol] = currency;
             }

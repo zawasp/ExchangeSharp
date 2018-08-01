@@ -140,7 +140,7 @@ namespace ExchangeSharp
         /// <param name="isLocalDateTime">True if the obj has a date time that is a local date time, false if it is UTC</param>
         /// <param name="defaultValue">Default value if no conversion is possible</param>
         /// <returns>DateTime with DateTimeKind kind or defaultValue if no conversion possible</returns>
-        public static DateTime ToDateTimeInvariant(this object obj, bool isLocalDateTime = false, DateTime defaultValue = default(DateTime))
+        public static DateTime ToDateTimeInvariant(this object obj, bool isLocalDateTime = false, DateTime defaultValue = default)
         {
             if (obj == null)
             {
@@ -171,7 +171,7 @@ namespace ExchangeSharp
         /// <param name="obj">Object</param>
         /// <param name="defaultValue">Default value if no conversion is possible</param>
         /// <returns>Converted value or defaultValue if not conversion was possible</returns>
-        public static T ConvertInvariant<T>(this object obj, T defaultValue = default(T))
+        public static T ConvertInvariant<T>(this object obj, T defaultValue = default)
         {
             if (obj == null)
             {
@@ -295,20 +295,35 @@ namespace ExchangeSharp
         /// <returns>Clamped value</returns>
         public static decimal ClampDecimal(decimal minValue, decimal maxValue, decimal? stepSize, decimal value)
         {
-            if (minValue < 0) throw new ArgumentOutOfRangeException(nameof(minValue));
-            if (maxValue < 0) throw new ArgumentOutOfRangeException(nameof(maxValue));
-            if (value < 0) throw new ArgumentOutOfRangeException(nameof(value));
-            if (minValue > maxValue) throw new ArgumentOutOfRangeException(nameof(minValue));
+            if (minValue < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(minValue));
+            }
+            else if (maxValue < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(maxValue));
+            }
+            else if (value < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value));
+            }
+            else if (minValue > maxValue)
+            {
+                throw new ArgumentOutOfRangeException(nameof(minValue));
+            }
 
             if (stepSize.HasValue)
             {
-                if (stepSize < 0) throw new ArgumentOutOfRangeException(nameof(stepSize));
-
-                value = Math.Min(maxValue, value);
-                value = Math.Max(minValue, value);
+                if (stepSize < 0)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(stepSize));
+                }
                 decimal mod = value % stepSize.Value;
                 value -= mod;
             }
+
+            value = Math.Min(maxValue, value);
+            value = Math.Max(minValue, value);
 
             return value.Normalize();
         }

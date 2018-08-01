@@ -111,7 +111,8 @@ namespace ExchangeSharp
                     FullName = token["currencyLong"].ToStringInvariant(),
                     MinConfirmations = token["minConfirmation"].ConvertInvariant<int>(),
                     TxFee = token["txFee"].ConvertInvariant<decimal>(),
-                    IsEnabled = token["status"].ToStringInvariant().Equals("OK")
+                    DepositEnabled = token["status"].ToStringInvariant().Equals("OK"),
+                    WithdrawalEnabled = token["status"].ToStringInvariant().Equals("OK")
                 };
                 currencies[token["currency"].ToStringInvariant()] = currency;
             }

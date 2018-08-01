@@ -85,7 +85,8 @@ namespace ExchangeSharp
                     //MinConfirmations = token["DepositConfirmations"].ConvertInvariant<int>(),
                     //Notes = token["StatusMessage"].ToStringInvariant(),
                     TxFee = token["withdrawal_fee_const"].ConvertInvariant<decimal>(),
-                    IsEnabled = token["active"].ToObject<bool>()
+                    DepositEnabled = token["active"].ToObject<bool>(),
+                    WithdrawalEnabled = token["active"].ToObject<bool>()
                 };
                 currencies[token["currency"].ToStringInvariant()] = currency;
             }
