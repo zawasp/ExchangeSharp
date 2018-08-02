@@ -14,7 +14,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
-using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using ExchangeSharp.Utility;
@@ -295,7 +294,7 @@ namespace ExchangeSharp
             payload["pair"] = order.Symbol;
             payload["type"] = order.IsBuy ? "BUY" : "SELL";
             payload["rate"] = order.Price;
-            payload["amount"] = order.Amount;
+            payload["amount"] = CryptoUtility.RoundDown(order.Amount, 8);
             order.ExtraParameters.CopyTo(payload);
 
             var token = await MakeJsonRequestAsync<JToken>("/", null, payload, "POST");
