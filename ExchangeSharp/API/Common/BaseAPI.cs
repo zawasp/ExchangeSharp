@@ -43,6 +43,11 @@ namespace ExchangeSharp
         TicksString,
 
         /// <summary>
+        /// Start with ticks, then increment by one
+        /// </summary>
+        TicksThenIncrement,
+
+        /// <summary>
         /// Milliseconds (int64)
         /// </summary>
         UnixMilliseconds,
@@ -51,6 +56,11 @@ namespace ExchangeSharp
         /// Milliseconds (string)
         /// </summary>
         UnixMillisecondsString,
+
+        /// <summary>
+        /// Start with Unix milliseconds then increment by one
+        /// </summary>
+        UnixMillisecondsThenIncrement,
 
         /// <summary>
         /// Seconds (double)
@@ -65,7 +75,12 @@ namespace ExchangeSharp
         /// <summary>
         /// Persist nonce to counter and file for the API key, once it hits int.MaxValue, it is useless
         /// </summary>
-        IntegerFile
+        Int32File,
+
+        /// <summary>
+        /// Persist nonce to counter and file for the API key, once it hits long.MaxValue, it is useless
+        /// </summary>
+        Int64File
     }
 
     /// <summary>
@@ -160,11 +175,6 @@ namespace ExchangeSharp
         public System.Net.Cache.RequestCachePolicy RequestCachePolicy { get; set; } = new System.Net.Cache.RequestCachePolicy(System.Net.Cache.RequestCacheLevel.NoCacheNoStore);
 
         /// <summary>
-        /// Whether the DateTime values from the api are in local time. Most API use UTC, but there are some (Poloniex) that return local DateTime for some odd reason.
-        /// </summary>
-        public bool DateTimeAreLocal { get; set; }
-
-        /// <summary>
         /// Fast in memory cache
         /// </summary>
         protected MemoryCache Cache { get; } = new MemoryCache();
@@ -229,14 +239,13 @@ namespace ExchangeSharp
                 await OnGetNonceOffset();
             }
 
-            // exclusive lock, no two nonces must match
             lock (this)
             {
                 object nonce;
 
                 while (true)
                 {
-                    // some API (Binance) have a problem with requests being after server time, subtract of one second fixes it
+                    // some API (Binance) have a problem with requests being after server time, subtract of offset can help
                     DateTime now = DateTime.UtcNow - NonceOffset;
                     Task.Delay(1).Wait();
 
@@ -250,12 +259,34 @@ namespace ExchangeSharp
                             nonce = now.Ticks.ToStringInvariant();
                             break;
 
+                        case NonceStyle.TicksThenIncrement:
+                            if (lastNonce == 0m)
+                            {
+                                nonce = now.Ticks;
+                            }
+                            else
+                            {
+                                nonce = (long)(lastNonce + 1m);
+                            }
+                            break;
+
                         case NonceStyle.UnixMilliseconds:
                             nonce = (long)now.UnixTimestampFromDateTimeMilliseconds();
                             break;
 
                         case NonceStyle.UnixMillisecondsString:
                             nonce = ((long)now.UnixTimestampFromDateTimeMilliseconds()).ToStringInvariant();
+                            break;
+
+                        case NonceStyle.UnixMillisecondsThenIncrement:
+                            if (lastNonce == 0m)
+                            {
+                                nonce = (long)now.UnixTimestampFromDateTimeMilliseconds();
+                            }
+                            else
+                            {
+                                nonce = (long)(lastNonce + 1m);
+                            }
                             break;
 
                         case NonceStyle.UnixSeconds:
@@ -266,9 +297,11 @@ namespace ExchangeSharp
                             nonce = now.UnixTimestampFromDateTimeSeconds().ToStringInvariant();
                             break;
 
-                        case NonceStyle.IntegerFile:
+                        case NonceStyle.Int32File:
+                        case NonceStyle.Int64File:
                         {
                             // why an API would use a persistent incrementing counter for nonce is beyond me, ticks is so much better with a sliding window...
+                            // making it required to increment by 1 is also a pain - especially when restarting a process or rebooting.
                             string tempFile = Path.Combine(Path.GetTempPath(), PublicApiKey.ToUnsecureString() + ".nonce");
                             if (!File.Exists(tempFile))
                             {
@@ -276,16 +309,18 @@ namespace ExchangeSharp
                             }
                             unchecked
                             {
-                                int intNonce = int.Parse(File.ReadAllText(tempFile), CultureInfo.InvariantCulture) + 1;
-                                if (intNonce < 1)
+                                long longNonce = long.Parse(File.ReadAllText(tempFile), CultureInfo.InvariantCulture) + 1;
+                                long maxValue = (NonceStyle == NonceStyle.Int32File ? int.MaxValue : long.MaxValue);
+                                if (longNonce < 1 || longNonce > maxValue)
                                 {
-                                    throw new APIException("Nonce is out of bounds of a signed 32 bit integer (1 - " + int.MaxValue.ToStringInvariant() +
-                                        "), please regenerate new API keys. Please contact the API support and ask them to change this horrible nonce behavior.");
+                                    throw new APIException($"Nonce {longNonce.ToStringInvariant()} is out of bounds, valid ranges are 1 to {maxValue.ToStringInvariant()}, " +
+                                        $"please regenerate new API keys. Please contact {Name} API support and ask them to change to a sensible nonce algorithm.");
                                 }
-                                nonce = (long)intNonce;
-                                File.WriteAllText(tempFile, intNonce.ToStringInvariant());
+                                File.WriteAllText(tempFile, longNonce.ToStringInvariant());
+                                nonce = longNonce;
                             }
-                        } break;
+                            break;
+                        }
 
                         default:
                             throw new InvalidOperationException("Invalid nonce style: " + NonceStyle);
@@ -475,7 +510,7 @@ namespace ExchangeSharp
             {
                 throw new APIException("No result from server");
             }
-            else if (!(result is JArray))
+            else if (!(result is JArray) && result.Type == JTokenType.Object)
             {
                 if
                 (
@@ -486,7 +521,7 @@ namespace ExchangeSharp
                     (result["Status"].ToStringInvariant() == "error") ||
                     (result["success"] != null && result["success"].ConvertInvariant<bool>() != true) ||
                     (result["Success"] != null && result["Success"].ConvertInvariant<bool>() != true) ||
-                    (result["ok"] != null && result["ok"].ToStringInvariant().ToLowerInvariant() != "ok")
+                    (!string.IsNullOrWhiteSpace(result["ok"].ToStringInvariant()) && result["ok"].ToStringInvariant().ToLowerInvariant() != "ok")
                 )
                 {
                     throw new APIException(result.ToStringInvariant());
@@ -519,16 +554,6 @@ namespace ExchangeSharp
         /// Derived classes can override to get a nonce offset from the API itself
         /// </summary>
         protected virtual Task OnGetNonceOffset() { return Task.CompletedTask; }        
-
-        /// <summary>
-        /// Convert a DateTime and set the kind using the DateTimeKind property.
-        /// </summary>
-        /// <param name="obj">Object to convert</param>
-        /// <returns>DateTime with DateTimeKind kind or defaultValue if no conversion possible</returns>
-        protected DateTime ConvertDateTimeInvariant(object obj, DateTime defaultValue = default)
-        {
-            return obj.ToDateTimeInvariant(DateTimeAreLocal, defaultValue);
-        }
 
         async Task IAPIRequestHandler.ProcessRequestAsync(HttpWebRequest request, Dictionary<string, object> payload)
         {

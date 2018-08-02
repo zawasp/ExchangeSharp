@@ -60,7 +60,7 @@ namespace ExchangeSharp
                 {
                     using (MD5 md5 = MD5.Create())
                     {
-                        requestContentBase64String = Convert.ToBase64String(md5.ComputeHash(Encoding.UTF8.GetBytes(jsonContent)));
+                        requestContentBase64String = Convert.ToBase64String(md5.ComputeHash(jsonContent.ToBytesUTF8()));
                     }
                 }
                 else request.ContentLength = 0;
@@ -72,7 +72,7 @@ namespace ExchangeSharp
                 // Cryptopia is very picky on how the payload is passed. There might be a better way to do this, but this works...
                 using (Stream stream = await request.GetRequestStreamAsync())
                 {
-                    byte[] content = Encoding.UTF8.GetBytes(jsonContent);
+                    byte[] content = jsonContent.ToBytesUTF8();
                     stream.Write(content, 0, content.Length);
                 }
             }
@@ -260,7 +260,7 @@ namespace ExchangeSharp
                     AmountFilled = order["Amount"].ConvertInvariant<decimal>(),       // It doesn't look like partial fills are supplied on closed orders
                     Price = order["Rate"].ConvertInvariant<decimal>(),
                     AveragePrice = order["Rate"].ConvertInvariant<decimal>(),
-                    OrderDate = ConvertDateTimeInvariant(order["TimeStamp"]),
+                    OrderDate = order["TimeStamp"].ToDateTimeInvariant(),
                     IsBuy = order["Type"].ToStringInvariant().Equals("Buy"),
                     Fees = order["Fee"].ConvertInvariant<decimal>(),
                     Result = ExchangeAPIOrderResult.Filled
@@ -283,7 +283,7 @@ namespace ExchangeSharp
                 ExchangeOrderResult order = new ExchangeOrderResult()
                 {
                     OrderId = data["OrderId"].ConvertInvariant<int>().ToStringInvariant(),
-                    OrderDate = ConvertDateTimeInvariant(data["TimeStamp"]),
+                    OrderDate = data["TimeStamp"].ToDateTimeInvariant(),
                     Symbol = data["Market"].ToStringInvariant(),
                     Amount = data["Amount"].ConvertInvariant<decimal>(),
                     Price = data["Rate"].ConvertInvariant<decimal>(),
@@ -372,7 +372,7 @@ namespace ExchangeSharp
                         BlockchainTxId = data["TxId"].ToStringInvariant(),
                         Notes = data["Type"].ToStringInvariant(),
                         PaymentId = data["Id"].ToStringInvariant(),
-                        Timestamp = ConvertDateTimeInvariant(data["TimeStamp"]),
+                        Timestamp = data["TimeStamp"].ToDateTimeInvariant(),
                         Symbol = data["Currency"].ToStringInvariant(),
                         TxFee = data["Fee"].ConvertInvariant<decimal>()
                     };
