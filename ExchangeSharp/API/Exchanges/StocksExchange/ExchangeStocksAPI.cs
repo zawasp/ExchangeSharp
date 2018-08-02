@@ -187,8 +187,8 @@ namespace ExchangeSharp
 
         protected override async Task<Dictionary<string, decimal>> OnGetAmountsAvailableToTradeAsync()
         {
-            var availableAmounts = new Dictionary<string, decimal>();
-            var holdAmounts = new Dictionary<string, decimal>();
+            //var availableAmounts = new Dictionary<string, decimal>();
+            //var holdAmounts = new Dictionary<string, decimal>();
             var totalAmounts = new Dictionary<string, decimal>();
             var payload = await OnGetNoncePayloadAsync();
             payload.Add("method", "GetInfo");
@@ -199,21 +199,22 @@ namespace ExchangeSharp
                 var amount = currency.Value.ToObject<decimal>();
                 if (amount > 0) totalAmounts.Add(currency.Name, amount);
             }
-            foreach (var currency in token["hold_funds"].Children<JProperty>())
-            {
-                var amount = currency.Value.ToObject<decimal>();
-                if (amount > 0) holdAmounts.Add(currency.Name, amount);
-            }
-            foreach (var totalAmount in totalAmounts)
-            {
-                var availableAmount = totalAmount.Value;
-                if (holdAmounts.ContainsKey(totalAmount.Key) && holdAmounts[totalAmount.Key] > 0)
-                {
-                    availableAmount -= holdAmounts[totalAmount.Key];
-                }
-                availableAmounts.Add(totalAmount.Key, availableAmount);
-            }
-            return availableAmounts;
+            return totalAmounts;
+            //foreach (var currency in token["hold_funds"].Children<JProperty>())
+            //{
+            //    var amount = currency.Value.ToObject<decimal>();
+            //    if (amount > 0) holdAmounts.Add(currency.Name, amount);
+            //}
+            //foreach (var totalAmount in totalAmounts)
+            //{
+            //    var availableAmount = totalAmount.Value;
+            //    if (holdAmounts.ContainsKey(totalAmount.Key) && holdAmounts[totalAmount.Key] > 0)
+            //    {
+            //        availableAmount -= holdAmounts[totalAmount.Key];
+            //    }
+            //    availableAmounts.Add(totalAmount.Key, availableAmount);
+            //}
+            //return availableAmounts;
         }
 
         protected override async Task<IEnumerable<ExchangeOrderResult>> OnGetCompletedOrderDetailsAsync(string symbol = null, DateTime? afterDate = null)
