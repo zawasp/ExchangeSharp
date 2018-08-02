@@ -131,21 +131,9 @@ namespace ExchangeSharp
 
         protected override async Task<ExchangeOrderBook> OnGetOrderBookAsync(string symbol, int maxCount = 100)
         {
-            try
-            {
-                var token = await MakeJsonRequestAsync<JToken>("/orderbook?pair=" + NormalizeSymbol(symbol));
-                return ExchangeAPIExtensions.ParseOrderBookFromJTokenDictionaries(token, "sell", "buy", "Rate",
-                    "Quantity", maxCount: maxCount);
-            }
-            catch (AggregateException ae)
-            {
-                ae.Handle(ex => true);
-            }
-            catch (APIException ex)
-            {
-
-            }
-            return new ExchangeOrderBook();
+            var token = await MakeJsonRequestAsync<JToken>("/orderbook?pair=" + NormalizeSymbol(symbol));
+            return ExchangeAPIExtensions.ParseOrderBookFromJTokenDictionaries(token, "sell", "buy", "Rate",
+                "Quantity", maxCount: maxCount);
         }
 
         protected override async Task<IEnumerable<ExchangeTrade>> OnGetRecentTradesAsync(string symbol)

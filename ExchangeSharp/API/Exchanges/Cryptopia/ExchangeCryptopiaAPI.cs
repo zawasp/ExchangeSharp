@@ -41,6 +41,10 @@ namespace ExchangeSharp
         {
             return (symbol ?? string.Empty).Replace('/', '_').Replace('-', '_');
         }
+        public static string DenormalizeSymbol(string symbol)
+        {
+            return (symbol ?? string.Empty).Replace('_', '/').Replace('-', '/');
+        }
 
         protected override async Task ProcessRequestAsync(HttpWebRequest request, Dictionary<string, object> payload)
         {
@@ -109,7 +113,7 @@ namespace ExchangeSharp
             JToken result = await MakeJsonRequestAsync<JToken>("/GetTradePairs");
             foreach (JToken token in result)
             {
-                symbols.Add(token["Label"].ToStringInvariant());
+                symbols.Add(NormalizeSymbol(token["Label"].ToStringInvariant()));
             }
             return symbols;
         }
@@ -314,7 +318,7 @@ namespace ExchangeSharp
             ExchangeOrderResult newOrder = new ExchangeOrderResult() { Result = ExchangeAPIOrderResult.Error };
 
             var payload = await OnGetNoncePayloadAsync();
-            payload["Market"] = order.Symbol;
+            payload["Market"] = DenormalizeSymbol(order.Symbol);
             payload["Type"] = order.IsBuy ? "Buy" : "Sell";
             payload["Rate"] = order.Price;
             payload["Amount"] = order.Amount;
