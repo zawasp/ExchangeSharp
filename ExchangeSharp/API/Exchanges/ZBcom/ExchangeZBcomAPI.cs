@@ -153,7 +153,7 @@ namespace ExchangeSharp
 
                 try
                 {
-                    JToken token = JToken.Parse(msg.UTF8String());
+                    JToken token = JToken.Parse(msg.ToStringFromUTF8());
                     if (token["dataType"].ToStringInvariant() == "ticker")
                     {
                         string channel = token["channel"].ToStringInvariant();
@@ -199,7 +199,7 @@ namespace ExchangeSharp
             {
                 try
                 {
-                    JToken token = JToken.Parse(msg.UTF8String());
+                    JToken token = JToken.Parse(msg.ToStringFromUTF8());
                     if (token["dataType"].ToStringInvariant() == "trades")
                     {
                         var channel = token["channel"].ToStringInvariant();

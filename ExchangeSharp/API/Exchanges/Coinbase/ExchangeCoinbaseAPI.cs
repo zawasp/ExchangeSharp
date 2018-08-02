@@ -385,7 +385,7 @@ namespace ExchangeSharp
             {
                 try
                 {
-                    JToken token = JToken.Parse(msg.UTF8String());
+                    JToken token = JToken.Parse(msg.ToStringFromUTF8());
                     if (token["type"].ToStringInvariant() != "ticker") return; //the ticker channel provides the trade information as well
                     if (token["time"] == null) return;
                     ExchangeTrade trade = ParseTradeWebSocket(token);

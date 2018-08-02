@@ -248,7 +248,7 @@ namespace ExchangeSharp
             {
                 try
                 {
-                    JToken token = JToken.Parse(msg.UTF8String());
+                    JToken token = JToken.Parse(msg.ToStringFromUTF8());
                     if (token is JArray array)
                     {
                         if (token.Last.Last.HasValues == false)
