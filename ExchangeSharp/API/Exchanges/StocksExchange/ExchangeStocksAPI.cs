@@ -24,7 +24,7 @@ namespace ExchangeSharp
     public sealed class ExchangeStocksAPI : ExchangeAPI
     {
         public override string Name => ExchangeName.StocksExchange;
-        public override string BaseUrl { get; set; } = "https://app.stocks.exchange/api2";
+        public override string BaseUrl { get; set; } = "https://app.stex.com/api2";
 
         public ExchangeStocksAPI()
         {
