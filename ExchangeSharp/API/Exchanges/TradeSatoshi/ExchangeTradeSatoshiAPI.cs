@@ -13,7 +13,6 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
@@ -22,9 +21,9 @@ using Newtonsoft.Json.Linq;
 
 namespace ExchangeSharp
 {
-    public sealed class ExchangeTradeSatoshiAPI : ExchangeAPI
+    public sealed partial class ExchangeTradeSatoshiAPI : ExchangeAPI
     {
-        public override string Name => ExchangeName.TradeSatoshi;
+        public partial class ExchangeName { public const string TradeSatoshi = "TradeSatoshi"; }
         public override string BaseUrl { get; set; } = "https://tradesatoshi.com/api/";
 
         public ExchangeTradeSatoshiAPI()
@@ -35,13 +34,12 @@ namespace ExchangeSharp
         }
 
         #region ProcessRequest 
-
-        public override string NormalizeSymbol(string symbol)
+        public string NormalizeSymbolForUrl(string symbol)
         {
-            return (symbol ?? string.Empty).Replace('/', '_').Replace('-', '_');
+            return NormalizeSymbol(symbol).Replace(SymbolSeparator, "_");
         }
 
-        protected override async Task ProcessRequestAsync(HttpWebRequest request, Dictionary<string, object> payload)
+        protected override async Task ProcessRequestAsync(IHttpWebRequest request, Dictionary<string, object> payload)
         {
             // Only Private APIs are POST and need Authorization
             if (CanMakeAuthenticatedRequest(payload) && request.Method == "POST")
@@ -50,7 +48,7 @@ namespace ExchangeSharp
                 var nonce = payload["nonce"] as string;
                 payload.Remove("nonce");
 
-                var jsonContent = CryptoUtility.GetJsonForPayload(payload);
+                var jsonContent = payload.GetJsonForPayload();
                 if (!string.IsNullOrEmpty(jsonContent))
                 {
                     using (var md5 = MD5.Create())
@@ -58,19 +56,13 @@ namespace ExchangeSharp
                         requestContentBase64String = Convert.ToBase64String(md5.ComputeHash(Encoding.UTF8.GetBytes(jsonContent)));
                     }
                 }
-                else request.ContentLength = 0;
 
                 var baseSig = string.Concat(PublicApiKey.ToUnsecureString(), request.Method, Uri.EscapeDataString(request.RequestUri.AbsoluteUri).ToLower(), nonce, requestContentBase64String);
                 var signature = CryptoUtility.SHA256SignBase64(baseSig, Convert.FromBase64String(PrivateApiKey.ToUnsecureString()));
-                request.Headers.Add(HttpRequestHeader.Authorization,
-                    $"amx {PublicApiKey.ToUnsecureString()}:{signature}:{nonce}");
+                request.AddHeader("authorization", $"amx {PublicApiKey.ToUnsecureString()}:{signature}:{nonce}");
 
-                // Cryptopia is very picky on how the payload is passed. There might be a better way to do this, but this works...
-                using (var stream = await request.GetRequestStreamAsync())
-                {
-                    var content = Encoding.UTF8.GetBytes(jsonContent);
-                    stream.Write(content, 0, content.Length);
-                }
+                var content = jsonContent.ToBytesUTF8();
+                await request.WriteAllAsync(content, 0, content.Length);
             }
         }
 
@@ -216,7 +208,7 @@ namespace ExchangeSharp
         {
             var amounts = new Dictionary<string, decimal>();
 
-            var payload = await OnGetNoncePayloadAsync();
+            var payload = await GetNoncePayloadAsync();
             payload.Add("Currency", "");
 
             var token = await MakeJsonRequestAsync<JToken>("/GetBalance", null, payload, "POST");
@@ -233,7 +225,7 @@ namespace ExchangeSharp
         {
             var amounts = new Dictionary<string, decimal>();
 
-            var payload = await OnGetNoncePayloadAsync();
+            var payload = await GetNoncePayloadAsync();
             payload.Add("Currency", "");
 
             // [ { "CurrencyId":1,"Symbol":"BTC","Total":"10300","Available":"6700.00000000","Unconfirmed":"2.00000000","HeldForTrades":"3400,00000000","PendingWithdraw":"200.00000000", "Address":"4HMjBARzTNdUpXCYkZDTHq8vmJQkdxXyFg","BaseAddress": "ZDTHq8vmJQkdxXyFgZDTHq8vmJQkdxXyFgZDTHq8vmJQkdxXyFg","Status":"OK", "StatusMessage":"" }, ... ]
@@ -249,7 +241,7 @@ namespace ExchangeSharp
 
         protected override async Task<IEnumerable<ExchangeOrderResult>> OnGetCompletedOrderDetailsAsync(string symbol = null, DateTime? afterDate = null)
         {
-            var payload = await OnGetNoncePayloadAsync();
+            var payload = await GetNoncePayloadAsync();
             if (!string.IsNullOrEmpty(symbol)) payload["Market"] = symbol;
             else payload["Market"] = string.Empty;
 
@@ -275,7 +267,7 @@ namespace ExchangeSharp
         {
             var orders = new List<ExchangeOrderResult>();
 
-            var payload = await OnGetNoncePayloadAsync();
+            var payload = await GetNoncePayloadAsync();
             payload["Market"] = string.IsNullOrEmpty(symbol) ? string.Empty : symbol;
 
             //[ {"OrderId": 23467,"TradePairId": 100,"Market": "DOT/BTC","Type": "Buy","Rate": 0.00000034,"Amount": 145.98000000, "Total": "0.00004963", "Remaining": "23.98760000", "TimeStamp":"2014-12-07T20:04:05.3947572" }, ... ]
@@ -320,7 +312,7 @@ namespace ExchangeSharp
         {
             var newOrder = new ExchangeOrderResult() { Result = ExchangeAPIOrderResult.Error };
 
-            var payload = await OnGetNoncePayloadAsync();
+            var payload = await GetNoncePayloadAsync();
             payload["Market"] = order.Symbol;
             payload["Type"] = order.IsBuy ? "Buy" : "Sell";
             payload["Rate"] = order.Price;
@@ -337,7 +329,7 @@ namespace ExchangeSharp
         // This should have a return value for success
         protected override async Task OnCancelOrderAsync(string orderId, string symbol = null)
         {
-            var payload = await OnGetNoncePayloadAsync();
+            var payload = await GetNoncePayloadAsync();
             payload["Type"] = "Trade";          // Cancel All by Market is supported. Here we're canceling by single Id
             payload["OrderId"] = int.Parse(orderId);
             // { "Success":true, "Error":null, "Data": [44310,44311]  }
@@ -353,7 +345,7 @@ namespace ExchangeSharp
         protected override async Task<IEnumerable<ExchangeTransaction>> OnGetDepositHistoryAsync(string symbol)
         {
             var deposits = new List<ExchangeTransaction>();
-            var payload = await OnGetNoncePayloadAsync();
+            var payload = await GetNoncePayloadAsync();
             // Uncomment as desired
             //payload["Type"] = "Deposit";
             //payload["Type"] = "Withdraw";
@@ -391,7 +383,7 @@ namespace ExchangeSharp
         protected override async Task<ExchangeDepositDetails> OnGetDepositAddressAsync(string symbol, bool forceRegenerate = false)
         {
 
-            var payload = await OnGetNoncePayloadAsync();
+            var payload = await GetNoncePayloadAsync();
             payload["Currency"] = symbol;
             var token = await MakeJsonRequestAsync<JToken>("/GetDepositAddress", null, payload, "POST");
             if (token["Address"] == null) return null;
@@ -407,8 +399,8 @@ namespace ExchangeSharp
         {
             var response = new ExchangeWithdrawalResponse { Success = false };
 
-            var payload = await OnGetNoncePayloadAsync();
-            payload.Add("Currency", withdrawalRequest.Symbol);
+            var payload = await GetNoncePayloadAsync();
+            payload.Add("Currency", withdrawalRequest.Currency);
             payload.Add("Address", withdrawalRequest.Address);
             if (!string.IsNullOrEmpty(withdrawalRequest.AddressTag)) payload.Add("PaymentId", withdrawalRequest.AddressTag);
             payload.Add("Amount", withdrawalRequest.Amount);

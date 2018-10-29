@@ -14,11 +14,13 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
+using System.Collections.Specialized;
 using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Net;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Security;
 using System.Security.Cryptography;
@@ -36,28 +38,56 @@ namespace ExchangeSharp
         private static readonly DateTime unixEpochLocal = new DateTime(1970, 1, 1, 0, 0, 0, 0, DateTimeKind.Local);
         private static readonly Encoding utf8EncodingNoPrefix = new UTF8Encoding(false, true);
 
-        /// <summary>
-        /// Static constructor
-        /// </summary>
-        static CryptoUtility()
+        private static Func<DateTime> utcNowFunc = UtcNowFuncImpl;
+
+        private static DateTime UtcNowFuncImpl()
         {
-            IsWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
-            IsMono = (Type.GetType("Mono.Runtime") != null);
+            return DateTime.UtcNow;
         }
 
         /// <summary>
-        /// Utf-8 encoding with no prefix bytes
+        /// Set utc now func for override CryptoUtility.UtcNow. Set to null to go back to default CryptoUtility.UtcNow.
+        /// This is primarily useful for unit or integration testing.
         /// </summary>
-        public static Encoding UTF8EncodingNoPrefix { get { return utf8EncodingNoPrefix; } }
+        /// <param name="utcNowFunc">Utc now override func</param>
+        public static void SetDateTimeUtcNowFunc(Func<DateTime> utcNowFunc)
+        {
+            CryptoUtility.utcNowFunc = utcNowFunc ?? UtcNowFuncImpl;
+        }
+
+        /// <summary>
+        /// Empty object array
+        /// </summary>
+        public static readonly object[] EmptyObjectArray = new object[0];
+
+        /// <summary>
+        /// Empty string array
+        /// </summary>
+        public static readonly string[] EmptyStringArray = new string[0];
+
+        /// <summary>
+        /// Throw ArgumentNullException if obj is null
+        /// </summary>
+        /// <param name="obj">Object</param>
+        /// <param name="name">Parameter name</param>
+        /// <param name="message">Message</param>
+        public static void ThrowIfNull(this object obj, string name, string message = null)
+        {
+            if (obj == null)
+            {
+                throw new ArgumentNullException(name, message);
+            }
+        }
 
         /// <summary>
         /// Convert an object to string using invariant culture
         /// </summary>
         /// <param name="obj">Object</param>
+        /// <param name="defaultValue">Default value if null</param>
         /// <returns>String</returns>
-        public static string ToStringInvariant(this object obj)
+        public static string ToStringInvariant(this object obj, string defaultValue = "")
         {
-            return Convert.ToString(obj, CultureInfo.InvariantCulture) ?? string.Empty;
+            return Convert.ToString(obj, CultureInfo.InvariantCulture) ?? defaultValue;
         }
 
         /// <summary>
@@ -207,11 +237,11 @@ namespace ExchangeSharp
         }
 
         /// <summary>
-        /// Convert a secure string to binary data
+        /// Convert a secure string to non-secure binary data
         /// </summary>
         /// <param name="s">SecureString</param>
         /// <returns>Binary data</returns>
-        public static byte[] ToBytesUTF8(this SecureString s)
+        public static byte[] ToUnsecureBytesUTF8(this SecureString s)
         {
             if (s == null)
             {
@@ -271,14 +301,17 @@ namespace ExchangeSharp
         /// Convert utf-8 bytes to a string
         /// </summary>
         /// <param name="bytes"></param>
+        /// <param name="index">Offset</param>
+        /// <param name="length">Length</param>
         /// <returns>UTF-8 string or null if bytes is null</returns>
-        public static string ToStringFromUTF8(this byte[] bytes)
+        public static string ToStringFromUTF8(this byte[] bytes, int index = 0, int length = 0)
         {
             if (bytes == null)
             {
                 return null;
             }
-            return utf8EncodingNoPrefix.GetString(bytes);
+            length = (length <= 0 ? bytes.Length : length);
+            return utf8EncodingNoPrefix.GetString(bytes, index, length);
         }
 
         /// <summary>
@@ -293,6 +326,96 @@ namespace ExchangeSharp
                 return null;
             }
             return DecompressGzip(bytes).ToStringFromUTF8();
+        }
+
+        /// <summary>
+        /// JWT encode - converts to base64 string first then replaces + with - and / with _
+        /// </summary>
+        /// <param name="input">Input string</param>
+        /// <returns>Encoded string</returns>
+        public static string JWTEncode(this byte[] input)
+        {
+            return Convert.ToBase64String(input)
+                .Trim('=')
+                .Replace('+', '-')
+                .Replace('/', '_');
+        }
+
+        /// <summary>
+        /// JWT encode - converts to base64 string first then replaces + with - and / with _
+        /// </summary>
+        /// <param name="input">Input string</param>
+        /// <returns>Encoded string</returns>
+        public static string JWTEncode(this string input)
+        {
+            return Convert.ToBase64String(input.ToBytesUTF8())
+                .Trim('=')
+                .Replace('+', '-')
+                .Replace('/', '_');
+        }
+
+        /// <summary>
+        /// JWT decode from JWTEncode
+        /// </summary>
+        /// <param name="input">Input</param>
+        /// <returns>Decoded string</returns>
+        public static string JWTDecodedString(this string input)
+        {
+            string output = input.Replace('-', '+').Replace('_', '/');
+            switch (output.Length % 4) // Pad with trailing '='s
+            {
+                case 0: break; // No pad chars in this case
+                case 2: output += "=="; break; // Two pad chars
+                case 3: output += "="; break; // One pad char
+                default: throw new ArgumentException("Bad JWT string: " + input);
+            }
+            return Convert.FromBase64String(output).ToStringFromUTF8();
+        }
+
+        /// <summary>
+        /// JWT decode from JWTEncode
+        /// </summary>
+        /// <param name="input">Input</param>
+        /// <returns>Decoded bytes</returns>
+        public static byte[] JWTDecodedBytes(this string input)
+        {
+            string output = input.Replace('-', '+').Replace('_', '/');
+            switch (output.Length % 4) // Pad with trailing '='s
+            {
+                case 0: break; // No pad chars in this case
+                case 2: output += "=="; break; // Two pad chars
+                case 3: output += "="; break; // One pad char
+                default: throw new ArgumentException("Bad JWT string: " + input);
+            }
+            return Convert.FromBase64String(output);
+        }
+
+        /// <summary>
+        /// Url encode extension - use this for ALL url encoding / escaping
+        /// </summary>
+        /// <param name="s">String to url encode</param>
+        /// <returns>Url encoded string</returns>
+        public static string UrlEncode(this string s)
+        {
+            return WebUtility.UrlEncode((s ?? string.Empty));
+        }
+
+        /// <summary>
+        /// Form encode extension - use this for ALL form encoding / escaping
+        /// </summary>
+        /// <param name="s">String to form encode</param>
+        /// <returns>Form encoded string</returns>
+        public static string FormEncode(this string s)
+        {
+            return (s ?? string.Empty)
+                .Replace("%", "%25")
+                .Replace("+", "%2B")
+                .Replace(' ', '+')
+                .Replace("&", "%26")
+                .Replace("=", "%3D")
+                .Replace("\r", "%0D")
+                .Replace("\n", "%0A")
+                .Replace(":", "%3A");
         }
 
         /// <summary>
@@ -415,6 +538,41 @@ namespace ExchangeSharp
         }
 
         /// <summary>
+        /// Convert a timestamp to DateTime. If value is null, CryptoUtility.UtcNow is returned.
+        /// </summary>
+        /// <param name="value">Timestamp object (JToken, string, double, etc.)</param>
+        /// <param name="type">Type of timestamp</param>
+        /// <returns>DateTime</returns>
+        public static DateTime ParseTimestamp(object value, TimestampType type)
+        {
+            if (value == null || type == TimestampType.None)
+            {
+                return CryptoUtility.UtcNow;
+            }
+
+            switch (type)
+            {
+                case TimestampType.Iso8601:
+                    return value.ToDateTimeInvariant();
+
+                case TimestampType.UnixMillisecondsDouble:
+                    return UnixTimeStampToDateTimeMilliseconds(value.ConvertInvariant<double>());
+
+                case TimestampType.UnixMilliseconds:
+                    return UnixTimeStampToDateTimeMilliseconds(value.ConvertInvariant<long>());
+
+                case TimestampType.UnixSecondsDouble:
+                    return UnixTimeStampToDateTimeSeconds(value.ConvertInvariant<double>());
+
+                case TimestampType.UnixSeconds:
+                    return UnixTimeStampToDateTimeSeconds(value.ConvertInvariant<long>());
+
+                default:
+                    throw new ArgumentException("Invalid timestamp type " + type);
+            }
+        }
+
+        /// <summary>
         /// Get a string that can be used for basic authentication. Put this in the 'Authorization' http header, and ensure you are using https.
         /// </summary>
         /// <param name="userName">User name or public key</param>
@@ -426,15 +584,27 @@ namespace ExchangeSharp
         }
 
         /// <summary>
-        /// Convert a payload into json
+        /// Forces GetJsonForPayload to serialize the value of this key and nothing else.
+        /// This is a little hacky, but allows posting arrays instead of dictionary to API for bulk calls.
+        /// Normally a good API design would require a dictionary post with an array key and then
+        /// an array of values, allowing other key/values to be posted with the bulk call,
+        /// but some API (I'm looking at you Bitmex) just accept an array and nothing else.
+        /// </summary>
+        public const string PayloadKeyArray = "__hacky_array_key__";
+
+        /// <summary>
+        /// Convert a payload into json. If payload contains key PayloadKeyArray, that item is used only and serialized by itself
         /// </summary>
         /// <param name="payload">Payload</param>
         /// <returns>Json string</returns>
-        public static string GetJsonForPayload(Dictionary<string, object> payload)
+        public static string GetJsonForPayload(this Dictionary<string, object> payload)
         {
             if (payload != null && payload.Count != 0)
             {
-                // the decimal must same as GetFormForPayload
+                if (payload.TryGetValue(PayloadKeyArray, out object array))
+                {
+                    return JsonConvert.SerializeObject(array, DecimalConverter.Instance);
+                }
                 return JsonConvert.SerializeObject(payload, DecimalConverter.Instance);
             }
             return string.Empty;
@@ -445,17 +615,17 @@ namespace ExchangeSharp
         /// </summary>
         /// <param name="request">Request</param>
         /// <param name="form">Form to write</param>
-        public static async Task WriteToRequestAsync(this HttpWebRequest request, string form)
+        public static async Task WriteToRequestAsync(this IHttpWebRequest request, string form)
         {
-            if (!string.IsNullOrEmpty(form))
+            if (string.IsNullOrEmpty(form) && request.Method != "GET")
+            {
+                request.AddHeader("content-length", "0");
+            }
+            else
             {
                 byte[] bytes = form.ToBytesUTF8();
-                request.ContentLength = bytes.Length;
-                using (Stream stream = await request.GetRequestStreamAsync())
-                {
-                    stream.Write(bytes, 0, bytes.Length);
-                    await stream.FlushAsync();
-                }
+                request.AddHeader("content-length", bytes.Length.ToStringInvariant());
+                await request.WriteAllAsync(bytes, 0, bytes.Length);
             }
         }
 
@@ -465,7 +635,7 @@ namespace ExchangeSharp
         /// <param name="request">Request</param>
         /// <param name="payload">Payload</param>
         /// <returns>The form string that was written</returns>
-        public static async Task<string> WritePayloadFormToRequestAsync(this HttpWebRequest request, Dictionary<string, object> payload)
+        public static async Task<string> WritePayloadFormToRequestAsync(this IHttpWebRequest request, Dictionary<string, object> payload)
         {
             string form = GetFormForPayload(payload);
             await WriteToRequestAsync(request, form);
@@ -478,7 +648,7 @@ namespace ExchangeSharp
         /// <param name="request">Request</param>
         /// <param name="payload">Payload</param>
         /// <returns>The json string that was written</returns>
-        public static async Task<string> WritePayloadJsonToRequestAsync(this HttpWebRequest request, Dictionary<string, object> payload)
+        public static async Task<string> WritePayloadJsonToRequestAsync(this IHttpWebRequest request, Dictionary<string, object> payload)
         {
             string json = GetJsonForPayload(payload);
             await WriteToRequestAsync(request, json);
@@ -490,17 +660,22 @@ namespace ExchangeSharp
         /// </summary>
         /// <param name="payload">Payload</param>
         /// <param name="includeNonce">Whether to add the nonce</param>
+        /// <param name="orderByKey">Whether to order by the key</param>
+        /// <param name="formEncode">True to use form encoding, false to use url encoding</param>
         /// <returns>Form string</returns>
-        public static string GetFormForPayload(Dictionary<string, object> payload, bool includeNonce = true)
+        public static string GetFormForPayload(this IReadOnlyDictionary<string, object> payload, bool includeNonce = true, bool orderByKey = true, bool formEncode = true)
         {
             if (payload != null && payload.Count != 0)
             {
                 StringBuilder form = new StringBuilder();
-                foreach (KeyValuePair<string, object> keyValue in payload.OrderBy(kv => kv.Key))
+                IEnumerable<KeyValuePair<string, object>> e = (orderByKey ? payload.OrderBy(kv => kv.Key) : payload.AsEnumerable<KeyValuePair<string, object>>());
+                foreach (KeyValuePair<string, object> keyValue in e)
                 {
-                    if (keyValue.Key != null && keyValue.Value != null && (includeNonce || keyValue.Key != "nonce"))
+                    if (!string.IsNullOrWhiteSpace(keyValue.Key) && keyValue.Value != null && (includeNonce || keyValue.Key != "nonce"))
                     {
-                        form.AppendFormat("{0}={1}&", Uri.EscapeDataString(keyValue.Key), Uri.EscapeDataString(keyValue.Value.ToStringInvariant()));
+                        string key = (formEncode ? keyValue.Key.FormEncode() : keyValue.Key.UrlEncode());
+                        string value = (formEncode ? keyValue.Value.ToStringInvariant().FormEncode() : keyValue.Value.ToStringInvariant().UrlEncode());
+                        form.Append($"{key}={value}&");
                     }
                 }
                 if (form.Length != 0)
@@ -525,10 +700,7 @@ namespace ExchangeSharp
             }
             foreach (var kv in payload)
             {
-                uri.Query += WebUtility.UrlEncode(kv.Key);
-                uri.Query += "=";
-                uri.Query += kv.Value.ToStringInvariant();
-                uri.Query += "&";
+                uri.Query += $"{kv.Key.UrlEncode()}={kv.Value.ToStringInvariant().UrlEncode()}&";
             }
             uri.Query = uri.Query.Trim('&');
         }
@@ -672,6 +844,19 @@ namespace ExchangeSharp
             var messagebyte = message.ToBytesUTF8();
             var hashmessage = hmac.ComputeHash(messagebyte);
             return Convert.ToBase64String(hashmessage);
+        }
+
+        /// <summary>
+        /// Sign a message with MD5 hash
+        /// </summary>
+        /// <param name="message">Message to sign</param>
+        /// <returns>Signature in hex</returns>
+        public static string MD5Sign(string message, byte[] key)
+        {
+            var hmac = new HMACMD5(key);
+            var messagebyte = message.ToBytesUTF8();
+            var hashmessage = hmac.ComputeHash(messagebyte);
+            return BitConverter.ToString(hashmessage).Replace("-", "");
         }
 
         /// <summary>
@@ -980,16 +1165,6 @@ namespace ExchangeSharp
             return Math.Floor(amount * adjustment) / adjustment;
         }
 
-        /// <summary>
-        /// True if platform is Windows, false otherwise
-        /// </summary>
-        public static bool IsWindows { get; private set; }
-
-        /// <summary>
-        /// True if running under Mono (https://www.mono-project.com/), false if not
-        /// </summary>
-        public static bool IsMono { get; private set; }
-
         /// <summary>Calculates the precision allowed based on the number of decimal points in a number.</summary>
         /// <param name="numberWithDecimals">The number on which to count decimal points.</param>
         /// <returns>A number indicating how many digits are after the decimal point. 
@@ -1005,5 +1180,118 @@ namespace ExchangeSharp
 
             return (decimal)Math.Pow(10, -1 * precision);
         }
+
+        /// <summary>
+        /// Make a task execute synchronously
+        /// </summary>
+        /// <param name="task">Task</param>
+        public static void Sync(this Task task)
+        {
+            task.ConfigureAwait(false).GetAwaiter().GetResult();
+        }
+
+        /// <summary>
+        /// Make a task execute synchronously
+        /// </summary>
+        /// <param name="task">Task</param>
+        /// <returns>Result</returns>
+        public static T Sync<T>(this Task<T> task)
+        {
+            return task.ConfigureAwait(false).GetAwaiter().GetResult();
+        }
+
+        /// <summary>
+        /// Wrap a method in caching logic. Also takes care of making a new SynchronizationContextRemover.
+        /// This should not be used for post requests or other requests that operate on real-time data that changes with each request.
+        /// </summary>
+        /// <typeparam name="T">Return type</typeparam>
+        /// <param name="cache">Cache</param>
+        /// <param name="methodCachePolicy">Method cache policy</param>
+        /// <param name="method">Method implementation</param>
+        /// <param name="arguments">Function arguments - function name and then param name, value, name, value, etc.</param>
+        /// <returns></returns>
+        public static async Task<T> CacheMethod<T>(this ICache cache, Dictionary<string, TimeSpan> methodCachePolicy, Func<Task<T>> method, params object[] arguments) where T : class
+        {
+            await new SynchronizationContextRemover();
+            methodCachePolicy.ThrowIfNull(nameof(methodCachePolicy));
+            if (arguments.Length % 2 == 0)
+            {
+                throw new ArgumentException("Must pass function name and then name and value of each argument");
+            }
+            string methodName = arguments[0].ToStringInvariant();
+            string cacheKey = methodName;
+            for (int i = 1; i < arguments.Length;)
+            {
+                cacheKey += "|" + arguments[i++].ToStringInvariant() + "=" + arguments[i++].ToStringInvariant("(null)");
+            }
+            if (methodCachePolicy.TryGetValue(methodName, out TimeSpan cacheTime))
+            {
+                return (await cache.Get<T>(cacheKey, async () =>
+                {
+                    T innerResult = await method();
+                    return new CachedItem<T>(innerResult, CryptoUtility.UtcNow.Add(cacheTime));
+                })).Value;
+            }
+            else
+            {
+                return await method();
+            }
+        }
+
+        /// <summary>
+        /// Utf-8 encoding with no prefix bytes
+        /// </summary>
+        public static Encoding UTF8EncodingNoPrefix { get { return utf8EncodingNoPrefix; } }
+
+        /// <summary>
+        /// Return CryptoUtility.UtcNow or override if SetDateTimeUtcNowFunc has been called
+        /// </summary>
+        public static DateTime UtcNow { get { return utcNowFunc(); } }
+
+        /// <summary>
+        /// True if platform is Windows, false otherwise
+        /// </summary>
+        public static bool IsWindows { get; } = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+
+        /// <summary>
+        /// True if running under Mono (https://www.mono-project.com/), false if not
+        /// </summary>
+        public static bool IsMono { get; } = (Type.GetType("Mono.Runtime") != null);
+    }
+
+    /// <summary>
+    /// Possible types of timestamps
+    /// </summary>
+    public enum TimestampType
+    {
+        /// <summary>
+        /// No timestamp type
+        /// </summary>
+        None,
+
+        /// <summary>
+        /// Unix milliseconds (double)
+        /// </summary>
+        UnixMillisecondsDouble,
+
+        /// <summary>
+        /// Unix milliseconds (long)
+        /// </summary>
+        UnixMilliseconds,
+
+        /// <summary>
+        /// Unix seconds (double)
+        /// </summary>
+        UnixSecondsDouble,
+
+        /// <summary>
+        /// Unix seconds (long)
+        /// </summary>
+        UnixSeconds,
+
+        /// <summary>
+        /// ISO 8601
+        /// </summary>
+        Iso8601
     }
 }

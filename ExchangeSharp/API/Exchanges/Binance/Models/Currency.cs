@@ -1,7 +1,7 @@
 ﻿/*
 MIT LICENSE
 
-Copyright 2018 Digital Ruby, LLC - http://www.digitalruby.com
+Copyright 2017 Digital Ruby, LLC - http://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
@@ -32,10 +32,10 @@ namespace ExchangeSharp.Binance
         public decimal TransactionFee { get; set; }
 
         [JsonProperty("commissionRate")]
-        public int CommissionRate { get; set; }
+        public decimal CommissionRate { get; set; }
 
         [JsonProperty("freeAuditWithdrawAmt")]
-        public int FreeAuditWithdrawAmt { get; set; }
+        public decimal FreeAuditWithdrawAmt { get; set; }
 
         [JsonProperty("freeUserChargeAmount")]
         public long FreeUserChargeAmount { get; set; }
@@ -74,7 +74,7 @@ namespace ExchangeSharp.Binance
         public string RegExTag { get; set; }
 
         [JsonProperty("gas")]
-        public int Gas { get; set; }
+        public decimal Gas { get; set; }
 
         [JsonProperty("parentCode")]
         public string ParentCode { get; set; }
@@ -83,7 +83,7 @@ namespace ExchangeSharp.Binance
         public bool IsLegalMoney { get; set; }
 
         [JsonProperty("reconciliationAmount")]
-        public int ReconciliationAmount { get; set; }
+        public decimal ReconciliationAmount { get; set; }
 
         [JsonProperty("seqNum")]
         public string SeqNum { get; set; }

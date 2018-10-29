@@ -1,7 +1,7 @@
 ﻿/*
 MIT LICENSE
 
-Copyright 2018 Digital Ruby, LLC - http://www.digitalruby.com
+Copyright 2017 Digital Ruby, LLC - http://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
@@ -102,7 +102,7 @@ namespace ExchangeSharpTests
             var requestMaker = Substitute.For<IAPIRequestMaker>();
             requestMaker.MakeRequestAsync(ExchangeBinanceAPI.GetCurrenciesUrl, ExchangeBinanceAPI.BaseWebUrl).Returns(Resources.BinanceGetAllAssets);
             var binance = new ExchangeBinanceAPI { RequestMaker = requestMaker };
-            IReadOnlyDictionary<string, ExchangeCurrency> currencies = binance.GetCurrencies();
+            IReadOnlyDictionary<string, ExchangeCurrency> currencies = binance.GetCurrenciesAsync().Sync();
             currencies.Should().HaveCount(3);
             currencies.TryGetValue("bnb", out ExchangeCurrency bnb).Should().BeTrue();
             bnb.DepositEnabled.Should().BeFalse();

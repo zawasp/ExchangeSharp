@@ -25,9 +25,8 @@ using Newtonsoft.Json.Linq;
 
 namespace ExchangeSharp
 {
-    public sealed class ExchangeTuxExchangeAPI : ExchangeAPI
+    public sealed partial class ExchangeTuxExchangeAPI : ExchangeAPI
     {
-        public override string Name => ExchangeName.TuxExchange;
         public override string BaseUrl { get; set; } = "https://tuxexchange.com";
 
         public ExchangeTuxExchangeAPI()
@@ -40,7 +39,7 @@ namespace ExchangeSharp
 
         #region ProcessRequest 
 
-        protected override async Task ProcessRequestAsync(HttpWebRequest request, Dictionary<string, object> payload)
+        protected override async Task ProcessRequestAsync(IHttpWebRequest request, Dictionary<string, object> payload)
         {
             if (CanMakeAuthenticatedRequest(payload))
             {
@@ -49,15 +48,11 @@ namespace ExchangeSharp
                 payload.Remove("nonce");
 
                 var msg = CryptoUtility.GetFormForPayload(payload) + "&nonce=" + nonce;
-                var sig = CryptoUtility.SHA512Sign(msg, CryptoUtility.ToBytesUTF8(PrivateApiKey)).ToLower();
-                request.Headers.Add("Sign", sig);
-                request.Headers.Add("Key", PublicApiKey.ToUnsecureString());
-
-                using (Stream stream = await request.GetRequestStreamAsync())
-                {
-                    byte[] content = msg.ToBytesUTF8();
-                    stream.Write(content, 0, content.Length);
-                }
+                var sig = CryptoUtility.SHA512Sign(msg, CryptoUtility.ToUnsecureBytesUTF8(PrivateApiKey)).ToLowerInvariant();
+                request.AddHeader("Sign", sig);
+                request.AddHeader("Key", PublicApiKey.ToUnsecureString());
+                byte[] content = msg.ToBytesUTF8();
+                await request.WriteAllAsync(content, 0, content.Length);
             }
         }
 
@@ -98,7 +93,6 @@ namespace ExchangeSharp
             return (from prop in token.Children<JProperty>() select prop.Name).ToList();
         }
 
-
         /// <summary>
         /// Uses TuxExchange getticker method to get as much Market info as provided
         /// </summary>
@@ -129,19 +123,7 @@ namespace ExchangeSharp
             JToken token = await MakeJsonRequestAsync<JToken>("/api?method=getticker");
             foreach (JProperty prop in token)
             {
-                tickers.Add(new KeyValuePair<string, ExchangeTicker>(prop.Name, new ExchangeTicker()
-                {
-                    Id = prop.First["id"].ToStringLowerInvariant(),
-                    Ask = prop.First["lowestAsk"].ConvertInvariant<decimal>(),
-                    Bid = prop.First["highestBid"].ConvertInvariant<decimal>(),
-                    Last = prop.First["last"].ConvertInvariant<decimal>(),
-                    Volume = new ExchangeVolume()
-                    {
-                        // not sure which is which here
-                        ConvertedVolume = prop.First["quoteVolume"].ConvertInvariant<decimal>(),
-                        BaseVolume = prop.First["baseVolume"].ConvertInvariant<decimal>(),
-                    }
-                }));
+                tickers.Add(new KeyValuePair<string, ExchangeTicker>(prop.Name, this.ParseTicker(prop.First, prop.Name, "lowestAsk", "highestBid", "last", "baseVolume", "quoteVolume", idKey: "id")));
             }
             return tickers;
         }
@@ -170,24 +152,19 @@ namespace ExchangeSharp
 
             // TuxExchange requires a begin and end date for this call
             // we'll return an arbitrary last 10 trades from the last 24 hrs for the market symbol (volume could be low)
-            long start = (long)DateTime.UtcNow.AddDays(-1).UnixTimestampFromDateTimeSeconds();
-            long end = (long)DateTime.UtcNow.UnixTimestampFromDateTimeSeconds();
+            long start = (long)CryptoUtility.UtcNow.AddDays(-1).UnixTimestampFromDateTimeSeconds();
+            long end = (long)CryptoUtility.UtcNow.UnixTimestampFromDateTimeSeconds();
 
             // All TuxExchange Market Symbols begin with "BTC_" as a base-currency. They only support getting Trades for the Market Currency Symbol, so we split it for the call
-            string cur = symbol.Split('_')[1];
+            string cur = symbol.Split(SymbolSeparator[0])[1];
 
             // [{"tradeid":"3375","date":"2016-08-26 18:53:38","type":"buy","rate":"0.00000041","amount":"420.00000000","total":"0.00017220"}, ... ]
-            JToken token = await MakeJsonRequestAsync<JToken>("/api?method=gettradehistory&coin=" + cur + "&start=" + start + "&end=" + end);
+            // https://tuxexchange.com/api?method=gettradehistory&coin=DOGE&start=1472237476&end=1472237618
+            // TODO: Something is messed up here, most coins never return results...
+            JToken token = await MakeJsonRequestAsync<JToken>($"/api?method=gettradehistory&coin={cur}&start={start}&end={end}");
             foreach (JToken trade in token)
             {
-                trades.Add(new ExchangeTrade()
-                {
-                    Timestamp = trade["date"].ToDateTimeInvariant(),
-                    Id = trade["tradeid"].ConvertInvariant<long>(),
-                    IsBuy = trade["type"].ToStringInvariant().Equals("buy"),
-                    Amount = trade["amount"].ConvertInvariant<decimal>(),
-                    Price = trade["rate"].ConvertInvariant<decimal>()
-                });
+                trades.Add(token.ParseTrade("amount", "rate", "type", "date", TimestampType.Iso8601, "tradeid"));
             }
             if (trades.Count > 0) return trades.OrderByDescending(t => t.Timestamp).Take(10);
             else return trades;
@@ -196,22 +173,14 @@ namespace ExchangeSharp
         protected override async Task OnGetHistoricalTradesAsync(Func<IEnumerable<ExchangeTrade>, bool> callback, string symbol, DateTime? startDate = null, DateTime? endDate = null)
         {
             List<ExchangeTrade> trades = new List<ExchangeTrade>();
-
-            long start = startDate == null ? (long)DateTime.UtcNow.AddDays(-1).UnixTimestampFromDateTimeSeconds() : new DateTimeOffset((DateTime)startDate).ToUnixTimeSeconds();
-            long end = (long)DateTime.UtcNow.UnixTimestampFromDateTimeSeconds();
-            string coin = symbol.Split('_')[1];
+            long start = startDate == null ? (long)CryptoUtility.UtcNow.AddDays(-1).UnixTimestampFromDateTimeSeconds() : new DateTimeOffset((DateTime)startDate).ToUnixTimeSeconds();
+            long end = (long)CryptoUtility.UtcNow.UnixTimestampFromDateTimeSeconds();
+            string coin = symbol.Split(SymbolSeparator[0])[1];
             string url = "/api?method=gettradehistory&coin=" + coin + "&start=" + start + "&end=" + end;
             JToken token = await MakeJsonRequestAsync<JToken>(url);
             foreach (JToken trade in token)
             {
-                trades.Add(new ExchangeTrade()
-                {
-                    Timestamp = trade["date"].ToDateTimeInvariant(),
-                    Id = trade["tradeid"].ConvertInvariant<long>(),
-                    IsBuy = trade["type"].ToStringInvariant().Equals("buy"),
-                    Amount = trade["amount"].ConvertInvariant<decimal>(),
-                    Price = trade["rate"].ConvertInvariant<decimal>()
-                });
+                trades.Add(trade.ParseTrade("amount", "rate", "type", "date", TimestampType.Iso8601, "tradeid"));
             }
             callback?.Invoke(trades);
         }
@@ -239,7 +208,7 @@ namespace ExchangeSharp
         {
             Dictionary<string, decimal> amounts = new Dictionary<string, decimal>();
 
-            var payload = await OnGetNoncePayloadAsync();
+            var payload = await GetNoncePayloadAsync();
             payload.Add("method", "getmybalances");
 
             JToken token = await MakeJsonRequestAsync<JToken>("/api", null, payload, "POST");
@@ -257,7 +226,7 @@ namespace ExchangeSharp
         protected override async Task<Dictionary<string, decimal>> OnGetAmountsAvailableToTradeAsync()
         {
             Dictionary<string, decimal> amounts = new Dictionary<string, decimal>();
-            var payload = await OnGetNoncePayloadAsync();
+            var payload = await GetNoncePayloadAsync();
             payload.Add("method", "getmybalances");
 
             JToken token = await MakeJsonRequestAsync<JToken>("/api", null, payload, "POST");
@@ -282,7 +251,7 @@ namespace ExchangeSharp
         {
             List<ExchangeOrderResult> orders = new List<ExchangeOrderResult>();
 
-            var payload = await OnGetNoncePayloadAsync();
+            var payload = await GetNoncePayloadAsync();
             payload.Add("method", "getmytradehistory");
 
             JToken token = await MakeJsonRequestAsync<JToken>("/api", null, payload, "POST");
@@ -302,7 +271,7 @@ namespace ExchangeSharp
         {
             List<ExchangeOrderResult> orders = new List<ExchangeOrderResult>();
 
-            var payload = await OnGetNoncePayloadAsync();
+            var payload = await GetNoncePayloadAsync();
             payload.Add("method", "getmyopenorders");
             JToken token = await MakeJsonRequestAsync<JToken>("/api", null, payload, "POST");
 
@@ -320,7 +289,7 @@ namespace ExchangeSharp
         protected override async Task<ExchangeOrderResult> OnPlaceOrderAsync(ExchangeOrderRequest order)
         {
             var split = order.Symbol.Split('_');
-            var payload = await OnGetNoncePayloadAsync();
+            var payload = await GetNoncePayloadAsync();
             payload.Add("method", order.IsBuy ? "buy" : "sell");
             payload.Add("market", split[0]);
             payload.Add("coin", split[1]);
@@ -347,7 +316,7 @@ namespace ExchangeSharp
         // This should have a return value for success
         protected override async Task OnCancelOrderAsync(string orderId, string symbol = null)
         {
-            var payload = await OnGetNoncePayloadAsync();
+            var payload = await GetNoncePayloadAsync();
             payload.Add("method", "cancelorder");
             payload.Add("id", orderId);
             // TODO: a 'market' payload with split symbol *may* be required, in which case we'll have to do a lookup, but we can't. Again, the documentation is incomplete
@@ -358,7 +327,7 @@ namespace ExchangeSharp
         protected override async Task<IEnumerable<ExchangeTransaction>> OnGetDepositHistoryAsync(string symbol)
         {
             List<ExchangeTransaction> deposits = new List<ExchangeTransaction>();
-            var payload = await OnGetNoncePayloadAsync();
+            var payload = await GetNoncePayloadAsync();
             payload.Add("method", "getmydeposithistory");
 
             // {"365": { "coin": "DOGE","amount": "3","address": "D7ssLc8M4L3bKaku232GBeqxshbbD43hFM","date": "2016-02-11 21:23:44","txid": "ae4d47bc130ac8e2e1960ee3c3545963a380f6ef268d384f8fc3d6a2220c92fb" }
@@ -382,7 +351,7 @@ namespace ExchangeSharp
 
         protected override async Task<ExchangeDepositDetails> OnGetDepositAddressAsync(string symbol, bool forceRegenerate = false)
         {
-            var payload = await OnGetNoncePayloadAsync();
+            var payload = await GetNoncePayloadAsync();
             payload.Add("method", "getmyaddresses");
 
             // "addresses": { "BTC": "14iuWRBwB35HYG98vBxmVJoJZG73BZy4bZ", "LTC": "LXLWHFLpPbcKx69diMVEXVLAzSMXsyrQH2", "DOGE": "DGon17FjjTTVXaHeotm1gvw6ewUZ49WeZr",  }
@@ -402,9 +371,9 @@ namespace ExchangeSharp
         {
             ExchangeWithdrawalResponse response = new ExchangeWithdrawalResponse { Success = false };
 
-            var payload = await OnGetNoncePayloadAsync();
+            var payload = await GetNoncePayloadAsync();
             payload.Add("method", "withdraw");
-            payload.Add("coin", withdrawalRequest.Symbol);
+            payload.Add("coin", withdrawalRequest.Currency);
             payload.Add("amount", withdrawalRequest.Amount);
             payload.Add("address", withdrawalRequest.Address);
             // ( [success] => 1 [error] => Array ([0] => Withdraw requested. ))
@@ -415,4 +384,6 @@ namespace ExchangeSharp
 
         #endregion
     }
+
+    public partial class ExchangeName { public const string TuxExchange = "TuxExchange"; }
 }

@@ -12,13 +12,17 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.WebSockets;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Security;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -80,13 +84,36 @@ namespace ExchangeSharp
         /// <summary>
         /// Persist nonce to counter and file for the API key, once it hits long.MaxValue, it is useless
         /// </summary>
-        Int64File
+        Int64File,
+
+        /// <summary>
+        /// No nonce, use expires instead which passes an expires param to the api using the nonce value - duplicate nonce are allowed
+        /// Specify a negative NonceOffset for when you want the call to expire
+        /// </summary>
+        ExpiresUnixSeconds,
+
+        /// <summary>
+        /// No nonce, use expires instead which passes an expires param to the api using the nonce value - duplicate nonce are allowed
+        /// Specify a negative NonceOffset for when you want the call to expire
+        /// </summary>
+        ExpiresUnixMilliseconds
+    }
+
+    /// <summary>
+    /// Anything wit ha name
+    /// </summary>
+    public interface INamed
+    {
+        /// <summary>
+        /// The name of the service, exchange, etc.
+        /// </summary>
+        string Name { get; }
     }
 
     /// <summary>
     /// API base class functionality
     /// </summary>
-    public abstract class BaseAPI : IAPIRequestHandler
+    public abstract class BaseAPI : IAPIRequestHandler, INamed
     {
         /// <summary>
         /// User agent for requests
@@ -116,7 +143,7 @@ namespace ExchangeSharp
         /// <summary>
         /// Gets the name of the API
         /// </summary>
-        public abstract string Name { get; }
+        public virtual string Name { get; private set; }
 
         /// <summary>
         /// Public API key - only needs to be set if you are using private authenticated end points. Please use CryptoUtility.SaveUnprotectedStringsToFile to store your API keys, never store them in plain text!
@@ -175,11 +202,28 @@ namespace ExchangeSharp
         public System.Net.Cache.RequestCachePolicy RequestCachePolicy { get; set; } = new System.Net.Cache.RequestCachePolicy(System.Net.Cache.RequestCacheLevel.NoCacheNoStore);
 
         /// <summary>
-        /// Fast in memory cache
+        /// Method cache policy (method name, time to cache)
+        /// Can be cleared for no caching, or you can put in custom cache times using nameof(method) and timespan.
         /// </summary>
-        protected MemoryCache Cache { get; } = new MemoryCache();
+        public Dictionary<string, TimeSpan> MethodCachePolicy { get; } = new Dictionary<string, TimeSpan>();
+
+        private ICache cache = new MemoryCache();
+        /// <summary>
+        /// Get or set the current cache. Defaults to MemoryCache.
+        /// </summary>
+        public ICache Cache
+        {
+            get { return cache; }
+            set
+            {
+                value.ThrowIfNull(nameof(Cache));
+                cache = value;
+            }
+        }
 
         private decimal lastNonce;
+
+        private readonly string[] resultKeys = new string[] { "result", "data", "return", "Result", "Data", "Return" };
 
         /// <summary>
         /// Static constructor
@@ -218,16 +262,21 @@ namespace ExchangeSharp
         public BaseAPI()
         {
             requestMaker = new APIRequestMaker(this);
+
+            string className = GetType().Name;
+            object[] nameAttributes = GetType().GetCustomAttributes(typeof(ApiNameAttribute), true);
+            if (nameAttributes == null || nameAttributes.Length == 0)
+            {
+                Name = Regex.Replace(className, "^Exchange|API$", string.Empty, RegexOptions.CultureInvariant);
+            }
+            else
+            {
+                Name = (nameAttributes[0] as ApiNameAttribute).Name;
+            }
         }
 
         /// <summary>
         /// Generate a nonce
-        /// </summary>
-        /// <returns></returns>
-        public object GenerateNonce() => GenerateNonceAsync().GetAwaiter().GetResult();
-
-        /// <summary>
-        /// ASYNC - Generate a nonce
         /// </summary>
         /// <returns>Nonce</returns>
         public async Task<object> GenerateNonceAsync()
@@ -246,9 +295,7 @@ namespace ExchangeSharp
                 while (true)
                 {
                     // some API (Binance) have a problem with requests being after server time, subtract of offset can help
-                    DateTime now = DateTime.UtcNow - NonceOffset;
-                    Task.Delay(1).Wait();
-
+                    DateTime now = CryptoUtility.UtcNow - NonceOffset;
                     switch (NonceStyle)
                     {
                         case NonceStyle.Ticks:
@@ -309,7 +356,7 @@ namespace ExchangeSharp
                             }
                             unchecked
                             {
-                                long longNonce = long.Parse(File.ReadAllText(tempFile), CultureInfo.InvariantCulture) + 1;
+                                long longNonce = File.ReadAllText(tempFile).ConvertInvariant<long>() + 1;
                                 long maxValue = (NonceStyle == NonceStyle.Int32File ? int.MaxValue : long.MaxValue);
                                 if (longNonce < 1 || longNonce > maxValue)
                                 {
@@ -322,17 +369,28 @@ namespace ExchangeSharp
                             break;
                         }
 
+                        case NonceStyle.ExpiresUnixMilliseconds:
+                            nonce = (long)now.UnixTimestampFromDateTimeMilliseconds();
+                            break;
+
+                        case NonceStyle.ExpiresUnixSeconds:
+                            nonce = (long)now.UnixTimestampFromDateTimeSeconds();
+                            break;
+                            
                         default:
                             throw new InvalidOperationException("Invalid nonce style: " + NonceStyle);
                     }
 
                     // check for duplicate nonce
                     decimal convertedNonce = nonce.ConvertInvariant<decimal>();
-                    if (lastNonce != convertedNonce)
+                    if (lastNonce != convertedNonce || NonceStyle == NonceStyle.ExpiresUnixSeconds || NonceStyle == NonceStyle.ExpiresUnixMilliseconds)
                     {
                         lastNonce = convertedNonce;
                         break;
                     }
+
+                    // wait 1 millisecond for a new nonce
+                    Task.Delay(1).Sync();
                 }
 
                 return nonce;
@@ -377,41 +435,13 @@ namespace ExchangeSharp
         /// <param name="url">Path and query</param>
         /// <param name="baseUrl">Override the base url, null for the default BaseUrl</param>
         /// <param name="payload">Payload, can be null. For private API end points, the payload must contain a 'nonce' key set to GenerateNonce value.</param>
-        /// The encoding of payload is API dependant but is typically json.</param>
-        /// <param name="method">Request method or null for default</param>
-        /// <returns>Raw response</returns>
-        public string MakeRequest(string url, string baseUrl = null, Dictionary<string, object> payload = null, string method = null)
-        {
-            return MakeRequestAsync(url, baseUrl, payload, method).GetAwaiter().GetResult();
-        }
-
-        /// <summary>
-        /// ASYNC - Make a request to a path on the API
-        /// </summary>
-        /// <param name="url">Path and query</param>
-        /// <param name="baseUrl">Override the base url, null for the default BaseUrl</param>
-        /// <param name="payload">Payload, can be null. For private API end points, the payload must contain a 'nonce' key set to GenerateNonce value.</param>
-        /// The encoding of payload is API dependant but is typically json.</param>
+        /// The encoding of payload is API dependant but is typically json.
         /// <param name="method">Request method or null for default</param>
         /// <returns>Raw response</returns>
         public Task<string> MakeRequestAsync(string url, string baseUrl = null, Dictionary<string, object> payload = null, string method = null) => requestMaker.MakeRequestAsync(url, baseUrl: baseUrl, payload: payload, method: method);
 
         /// <summary>
         /// Make a JSON request to an API end point
-        /// </summary>
-        /// <typeparam name="T">Type of object to parse JSON as</typeparam>
-        /// <param name="url">Path and query</param>
-        /// <param name="baseUrl">Override the base url, null for the default BaseUrl</param>
-        /// <param name="payload">Payload, can be null. For private API end points, the payload must contain a 'nonce' key set to GenerateNonce value.</param>
-        /// <param name="requestMethod">Request method or null for default</param>
-        /// <returns>Result decoded from JSON response</returns>
-        public T MakeJsonRequest<T>(string url, string baseUrl = null, Dictionary<string, object> payload = null, string requestMethod = null)
-        {
-            return MakeJsonRequestAsync<T>(url, baseUrl, payload, requestMethod).GetAwaiter().GetResult();
-        }
-
-        /// <summary>
-        /// ASYNC - Make a JSON request to an API end point
         /// </summary>
         /// <typeparam name="T">Type of object to parse JSON as</typeparam>
         /// <param name="url">Path and query</param>
@@ -439,13 +469,32 @@ namespace ExchangeSharp
         /// <param name="messageCallback">Callback for messages</param>
         /// <param name="connectCallback">Connect callback</param>
         /// <returns>Web socket - dispose of the wrapper to shutdown the socket</returns>
-        public WebSocketWrapper ConnectWebSocket(string url, Action<byte[], WebSocketWrapper> messageCallback, Action<WebSocketWrapper> connectCallback = null)
+        public IWebSocket ConnectWebSocket
+        (
+            string url,
+            Func<IWebSocket, byte[], Task> messageCallback,
+            WebSocketConnectionDelegate connectCallback = null,
+            WebSocketConnectionDelegate disconnectCallback = null
+        )
         {
+            if (messageCallback == null)
+            {
+                throw new ArgumentNullException(nameof(messageCallback));
+            }
+
             string fullUrl = BaseUrlWebSocket + (url ?? string.Empty);
-            WebSocketWrapper wrapper = new WebSocketWrapper { Uri = new Uri(fullUrl), OnMessage = messageCallback, KeepAlive = TimeSpan.FromSeconds(5.0) };
+            ExchangeSharp.ClientWebSocket wrapper = new ExchangeSharp.ClientWebSocket
+            {
+                Uri = new Uri(fullUrl),
+                OnBinaryMessage = messageCallback
+            };
             if (connectCallback != null)
             {
-                wrapper.Connected += (s) => connectCallback(wrapper);
+                wrapper.Connected += connectCallback;
+            }
+            if (disconnectCallback != null)
+            {
+                wrapper.Disconnected += disconnectCallback;
             }
             wrapper.Start();
             return wrapper;
@@ -467,7 +516,7 @@ namespace ExchangeSharp
         /// </summary>
         /// <param name="request">Request</param>
         /// <param name="payload">Payload</param>
-        protected virtual Task ProcessRequestAsync(HttpWebRequest request, Dictionary<string, object> payload)
+        protected virtual Task ProcessRequestAsync(IHttpWebRequest request, Dictionary<string, object> payload)
         {
             return Task.CompletedTask;
         }
@@ -476,7 +525,7 @@ namespace ExchangeSharp
         /// Additional handling for response
         /// </summary>
         /// <param name="response">Response</param>
-        protected virtual void ProcessResponse(HttpWebResponse response)
+        protected virtual void ProcessResponse(IHttpWebResponse response)
         {
 
         }
@@ -501,7 +550,7 @@ namespace ExchangeSharp
         /// - API passes a 'success' element of 'false' if the call fails
         /// This call also looks for 'result', 'data', 'return' child elements and returns those if
         /// found, otherwise the result parameter is returned.
-        /// For all other cases, override CheckJsonResponse for the exchange.
+        /// For all other cases, override CheckJsonResponse for the exchange or add more logic here.
         /// </summary>
         /// <param name="result">Result</param>
         protected virtual JToken CheckJsonResponse(JToken result)
@@ -519,15 +568,24 @@ namespace ExchangeSharp
                     (!string.IsNullOrWhiteSpace(result["error_code"].ToStringInvariant())) ||
                     (result["status"].ToStringInvariant() == "error") ||
                     (result["Status"].ToStringInvariant() == "error") ||
-                    (result["success"] != null && result["success"].ConvertInvariant<bool>() != true) ||
-                    (result["Success"] != null && result["Success"].ConvertInvariant<bool>() != true) ||
+                    (result["success"] != null && !result["success"].ConvertInvariant<bool>()) ||
+                    (result["Success"] != null && !result["Success"].ConvertInvariant<bool>()) ||
                     (!string.IsNullOrWhiteSpace(result["ok"].ToStringInvariant()) && result["ok"].ToStringInvariant().ToLowerInvariant() != "ok")
                 )
                 {
                     throw new APIException(result.ToStringInvariant());
                 }
-                result = (result["result"] ?? result["data"] ?? result["return"] ??
-                    result["Result"] ?? result["Data"] ?? result["Return"] ?? result);
+
+                // find result object from result keywords
+                foreach (string key in resultKeys)
+                {
+                    JToken possibleResult = result[key];
+                    if (possibleResult != null && (possibleResult.Type == JTokenType.Object || possibleResult.Type == JTokenType.Array))
+                    {
+                        result = possibleResult;
+                        break;
+                    }
+                }
             }
             return result;
         }
@@ -537,7 +595,7 @@ namespace ExchangeSharp
         /// </summary>
         /// <param name="key">Key</param>
         /// <returns>Dictionary with nonce</returns>
-        protected virtual async Task<Dictionary<string, object>> OnGetNoncePayloadAsync()
+        protected virtual async Task<Dictionary<string, object>> GetNoncePayloadAsync()
         {
             Dictionary<string, object> noncePayload = new Dictionary<string, object>
             {
@@ -553,14 +611,14 @@ namespace ExchangeSharp
         /// <summary>
         /// Derived classes can override to get a nonce offset from the API itself
         /// </summary>
-        protected virtual Task OnGetNonceOffset() { return Task.CompletedTask; }        
+        protected virtual Task OnGetNonceOffset() { return Task.CompletedTask; }
 
-        async Task IAPIRequestHandler.ProcessRequestAsync(HttpWebRequest request, Dictionary<string, object> payload)
+        async Task IAPIRequestHandler.ProcessRequestAsync(IHttpWebRequest request, Dictionary<string, object> payload)
         {
             await ProcessRequestAsync(request, payload);
         }
 
-        void IAPIRequestHandler.ProcessResponse(HttpWebResponse response)
+        void IAPIRequestHandler.ProcessResponse(IHttpWebResponse response)
         {
             ProcessResponse(response);
         }
@@ -569,5 +627,31 @@ namespace ExchangeSharp
         {
             return ProcessRequestUrl(url, payload, method);
         }
+    }
+
+    /// <summary>
+    /// Normally a BaseAPI class attempts to get the Name from the class name.
+    /// If there is a problem, apply this attribute to a BaseAPI subclass to populate the Name property with the attribute name.
+    /// </summary>
+    [AttributeUsage(AttributeTargets.Class)]
+    public class ApiNameAttribute : Attribute
+    {
+        /// <summary>
+        /// Constructor
+        /// </summary>
+        /// <param name="name">Name</param>
+        public ApiNameAttribute(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                throw new ArgumentException($"'{nameof(name)}' must not be null or empty");
+            }
+            Name = name;
+        }
+
+        /// <summary>
+        /// Name
+        /// </summary>
+        public string Name { get; private set; }
     }
 }
