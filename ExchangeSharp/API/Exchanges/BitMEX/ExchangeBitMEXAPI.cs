@@ -194,8 +194,8 @@ namespace ExchangeSharp
              */
 
             List<ExchangeMarket> markets = new List<ExchangeMarket>();
-            JToken allSymbols = await MakeJsonRequestAsync<JToken>("/instrument");
-            foreach (JToken marketSymbolToken in allSymbols)
+            JToken allSymbols = await MakeJsonRequestAsync<JToken>("/instrument?count=500&reverse=false");
+			foreach (JToken marketSymbolToken in allSymbols)
             {
                 var market = new ExchangeMarket
                 {
@@ -352,7 +352,7 @@ namespace ExchangeSharp
                 {
                     marketSymbols = (await GetMarketSymbolsAsync()).ToArray();
                 }
-                await _socket.SendMessageAsync(new { op = "subscribe", args = marketSymbols.Select(s => "\"orderBookL2:" + this.NormalizeMarketSymbol(s) + "\"").ToArray() });
+                await _socket.SendMessageAsync(new { op = "subscribe", args = marketSymbols.Select(s => "orderBookL2:" + this.NormalizeMarketSymbol(s)).ToArray() });
             });
         }
 
